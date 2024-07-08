@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ type zoneData struct {
 	nsCache    sync.Map
 	mxCache    sync.Map
 	limiter    *rate.Limiter
+	resolver   string
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData) {
@@ -165,19 +167,19 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 	m.SetQuestion(name, lookupType)
 	m.SetEdns0(4096, false)
 
-	cUDP := &dns.Client{DialTimeout: time.Second * 10, ReadTimeout: time.Second * 10, WriteTimeout: time.Second * 10}
-	in, _, err := cUDP.Exchange(m, "8.8.8.8:53")
+	cUDP := &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60}
+	in, _, err := cUDP.Exchange(m, zd.resolver)
 	if err != nil {
-		return nil, fmt.Errorf("error looking up mx over UDP: %w", err)
+		return nil, fmt.Errorf("error looking up %s for %s over UDP: %w", dns.TypeToString[lookupType], name, err)
 	}
 
 	// Retry over TCP if the response was truncated
 	if in.Truncated {
 		log.Printf("MX query was truncated, retrying over TCP")
-		cTCP := &dns.Client{Net: "tcp", DialTimeout: time.Second * 10, ReadTimeout: time.Second * 10, WriteTimeout: time.Second * 10}
-		in, _, err = cTCP.Exchange(m, "8.8.8.8:53")
+		cTCP := &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60}
+		in, _, err = cTCP.Exchange(m, zd.resolver)
 		if err != nil {
-			return nil, fmt.Errorf("error looking up mx over TCP: %s", err)
+			return nil, fmt.Errorf("error looking up %s for %s over TCP: %w", dns.TypeToString[lookupType], name, err)
 		}
 	}
 
@@ -221,6 +223,9 @@ func parseTransfer(transferZone string, zd *zoneData) error {
 }
 
 func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
+	// Make gosec happy
+	// G304 (CWE-22): Potential file inclusion via variable (Confidence: HIGH, Severity: MEDIUM)
+	zoneFile = filepath.Clean(zoneFile)
 	fh, err := os.Open(zoneFile)
 	if err != nil {
 		return fmt.Errorf("parseZoneFile: unable to open %s: %w", zoneFile, err)
@@ -251,14 +256,16 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 func main() {
 
 	var zoneNameFlag = flag.String("zone", "se.", "zone to investigate")
+	var resolverFlag = flag.String("resolver", "8.8.8.8:53", "resolver to query")
 	var zoneFileFlag = flag.String("file", "", "zone file to parse")
 	flag.Parse()
 
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
-		m: map[string]struct{}{},
-		limiter: rate.NewLimiter(10, 1),
+		m:        map[string]struct{}{},
+		limiter:  rate.NewLimiter(10, 1),
+		resolver: *resolverFlag,
 	}
 
 	numWorkers := 10
