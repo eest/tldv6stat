@@ -27,7 +27,6 @@ type zoneData struct {
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData) {
-	wg.Add(1)
 	defer wg.Done()
 
 	for zone := range zoneCh {
@@ -289,6 +288,7 @@ func main() {
 	}
 
 	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
 		go queryWorker(i, zoneCh, &wg, zd)
 	}
 
