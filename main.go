@@ -170,15 +170,15 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 
 	in, _, err := zd.udpClient.Exchange(m, zd.resolver)
 	if err != nil {
-		return nil, fmt.Errorf("error looking up %s for %s over UDP: %w", dns.TypeToString[lookupType], name, err)
+		return nil, fmt.Errorf("error looking up %s for '%s' over UDP: %w", dns.TypeToString[lookupType], name, err)
 	}
 
 	// Retry over TCP if the response was truncated
 	if in.Truncated {
-		log.Printf("MX query was truncated, retrying over TCP")
+		log.Printf("UDP query for '%s' was truncated, retrying over TCP", name)
 		in, _, err = zd.tcpClient.Exchange(m, zd.resolver)
 		if err != nil {
-			return nil, fmt.Errorf("error looking up %s for %s over TCP: %w", dns.TypeToString[lookupType], name, err)
+			return nil, fmt.Errorf("error looking up %s for '%s' over TCP: %w", dns.TypeToString[lookupType], name, err)
 		}
 	}
 
