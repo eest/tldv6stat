@@ -15,6 +15,8 @@ import (
 )
 
 type zoneData struct {
+	udpClient  *dns.Client
+	tcpClient  *dns.Client
 	m          map[string]struct{}
 	wwwCounter uint64
 	nsCounter  uint64
@@ -166,8 +168,7 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 	m.SetQuestion(name, lookupType)
 	m.SetEdns0(4096, false)
 
-	cUDP := &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60}
-	in, _, err := cUDP.Exchange(m, zd.resolver)
+	in, _, err := zd.udpClient.Exchange(m, zd.resolver)
 	if err != nil {
 		return nil, fmt.Errorf("error looking up %s for %s over UDP: %w", dns.TypeToString[lookupType], name, err)
 	}
@@ -175,8 +176,7 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 	// Retry over TCP if the response was truncated
 	if in.Truncated {
 		log.Printf("MX query was truncated, retrying over TCP")
-		cTCP := &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60}
-		in, _, err = cTCP.Exchange(m, zd.resolver)
+		in, _, err = zd.tcpClient.Exchange(m, zd.resolver)
 		if err != nil {
 			return nil, fmt.Errorf("error looking up %s for %s over TCP: %w", dns.TypeToString[lookupType], name, err)
 		}
@@ -262,9 +262,11 @@ func main() {
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
-		m:        map[string]struct{}{},
-		limiter:  rate.NewLimiter(10, 1),
-		resolver: *resolverFlag,
+		m:         map[string]struct{}{},
+		limiter:   rate.NewLimiter(10, 1),
+		resolver:  *resolverFlag,
+		udpClient: &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		tcpClient: &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
 	}
 
 	numWorkers := 10
