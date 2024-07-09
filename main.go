@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,17 +16,19 @@ import (
 )
 
 type zoneData struct {
-	udpClient  *dns.Client
-	tcpClient  *dns.Client
-	m          map[string]struct{}
-	wwwCounter uint64
-	nsCounter  uint64
-	mxCounter  uint64
-	mutex      sync.Mutex
-	nsCache    sync.Map
-	mxCache    sync.Map
-	limiter    *rate.Limiter
-	resolver   string
+	udpClient         *dns.Client
+	tcpClient         *dns.Client
+	m                 map[string]struct{}
+	wwwCounter        uint64
+	nsCounter         uint64
+	mxCounter         uint64
+	mutex             sync.Mutex
+	nsCache           sync.Map
+	mxCache           sync.Map
+	limiter           *rate.Limiter
+	resolver          string
+	rcodeCounterMutex sync.Mutex
+	rcodeCounter      map[int]uint64
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData) {
@@ -182,6 +185,14 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 		}
 	}
 
+	if in.Rcode != dns.RcodeSuccess {
+		log.Printf("%s query for '%s' resulted in unsuccessful rcode: %s", dns.TypeToString[lookupType], name, dns.RcodeToString[in.Rcode])
+	}
+
+	zd.rcodeCounterMutex.Lock()
+	zd.rcodeCounter[in.Rcode] += 1
+	zd.rcodeCounterMutex.Unlock()
+
 	return in, nil
 }
 
@@ -262,11 +273,12 @@ func main() {
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
-		m:         map[string]struct{}{},
-		limiter:   rate.NewLimiter(10, 1),
-		resolver:  *resolverFlag,
-		udpClient: &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
-		tcpClient: &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		m:            map[string]struct{}{},
+		limiter:      rate.NewLimiter(10, 1),
+		resolver:     *resolverFlag,
+		udpClient:    &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		tcpClient:    &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		rcodeCounter: map[int]uint64{},
 	}
 
 	numWorkers := 10
@@ -307,8 +319,19 @@ func main() {
 	close(zoneCh)
 	wg.Wait()
 
+	sortedRcodes := []int{}
+	for rcode := range zd.rcodeCounter {
+		sortedRcodes = append(sortedRcodes, rcode)
+	}
+	sort.Ints(sortedRcodes)
+
 	fmt.Printf("At %s the .se zone contains %d domains\n", time.Now().Format(time.RFC3339), len(zd.m))
 	fmt.Printf("%.2f%% have IPv6 on www\n", float64(zd.wwwCounter)/float64(len(zd.m)))
 	fmt.Printf("%.2f%% have IPv6 on one or more DNS\n", float64(zd.nsCounter)/float64(len(zd.m)))
 	fmt.Printf("%.2f have IPv6 on one or more MX\n", float64(zd.mxCounter)/float64(len(zd.m)))
+	fmt.Println("rcode summary:")
+	for _, rcode := range sortedRcodes {
+		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
+	}
+
 }
