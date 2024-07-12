@@ -2,13 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -29,28 +31,47 @@ type zoneData struct {
 	resolver          string
 	rcodeCounterMutex sync.Mutex
 	rcodeCounter      map[int]uint64
+	timeoutCounter    atomic.Uint64
 	zoneSerial        uint32
 }
 
-func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData) {
+func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, logger *slog.Logger) {
 	defer wg.Done()
 
 	for zone := range zoneCh {
 		fmt.Printf("worker: %d, zone: %s\n", id, zone)
 
-		mxIsV6, err := isMxV6(zd, zone)
+		mxIsV6, err := isMxV6(zd, zone, logger)
 		if err != nil {
-			log.Fatal(err)
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				logger.Error("mxIsV6 query timed out", "zone", zone)
+				zd.timeoutCounter.Add(1)
+			} else {
+				logger.Error("isMxV6 failed", "error", err, "zone", zone)
+				os.Exit(1)
+			}
 		}
 
-		nsIsV6, err := isNsV6(zd, zone)
+		nsIsV6, err := isNsV6(zd, zone, logger)
 		if err != nil {
-			log.Fatal(err)
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				logger.Error("nsIsV6 query timed out", "zone", zone)
+				zd.timeoutCounter.Add(1)
+			} else {
+				logger.Error("nsIsV6 failed", "error", err, "zone", zone)
+				os.Exit(1)
+			}
 		}
 
-		wwwIsV6, err := isWwwV6(zd, zone)
+		wwwIsV6, err := isWwwV6(zd, zone, logger)
 		if err != nil {
-			log.Fatal(err)
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				logger.Error("wwwIsV6 query timed out", "zone", zone)
+				zd.timeoutCounter.Add(1)
+			} else {
+				logger.Error("wwwIsV6 failed", "error", err, "zone", zone)
+				os.Exit(1)
+			}
 		}
 
 		zd.mutex.Lock()
@@ -67,43 +88,43 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData) {
 	}
 }
 
-func isMxV6(zd *zoneData, name string) (bool, error) {
+func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 
-	msg, err := retryingLookup(zd, name, dns.TypeMX)
+	msg, err := retryingLookup(zd, zone, dns.TypeMX, logger)
 	if err != nil {
-		log.Fatal(err)
+		return false, fmt.Errorf("isMxV6: retryingLookup failed for zone: %w", err)
 	}
 
 	for _, rr := range msg.Answer {
 		if t, ok := rr.(*dns.MX); ok {
 			if t.Mx == "." && t.Preference == 0 {
 				if len(msg.Answer) == 1 {
-					log.Printf("skipping null MX (RFC 7505) record for %s\n", name)
+					logger.Info("skipping null MX (RFC 7505) record", "zone", zone)
 					break
 				}
-				log.Printf("A domain that advertises a null MX MUST NOT advertise any other MX RR yet the one for '%s' does, huh.", name)
+				logger.Info("A domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "zone", zone)
 				continue
 			}
 			if v, ok := zd.mxCache.Load(t.Mx); ok {
 				b := v.(bool)
 				if b {
-					log.Printf("isMxV6: got positive cache hit (%s): %s: %t", name, t.Mx, b)
+					logger.Info("isMxV6: got positive cache hit", "zone", zone, "mx", t.Mx)
 					return b, nil
 				}
-				log.Printf("isMxV6: got negative cache hit, continuing to look (%s): %s: %t", name, t.Mx, b)
+				logger.Info("isMxV6: got negative cache hit, continuing to look", "zone", zone, "mx", t.Mx)
 				continue
 			}
 
-			msg, err = retryingLookup(zd, t.Mx, dns.TypeAAAA)
+			msg, err = retryingLookup(zd, t.Mx, dns.TypeAAAA, logger)
 			if err != nil {
-				return false, fmt.Errorf("isMxV6 AAAA (%s): %s: %w", name, t.Mx, err)
+				return false, fmt.Errorf("isMxV6 retryingLookup (AAAA) failed for MX name %s: %w", t.Mx, err)
 			}
 			if len(msg.Answer) != 0 {
-				log.Printf("Found MX with AAAA (%s): %s", name, t.Mx)
+				logger.Info("Found MX with AAAA", "zone", zone, "mx", t.Mx)
 				zd.mxCache.Store(t.Mx, true)
 				return true, nil
 			} else {
-				log.Printf("MX missing AAAA (%s): %s", name, t.Mx)
+				logger.Info("MX missing AAAA", "zone", zone, "mx", t.Mx)
 				zd.mxCache.Store(t.Mx, false)
 			}
 		}
@@ -112,10 +133,10 @@ func isMxV6(zd *zoneData, name string) (bool, error) {
 	return false, nil
 }
 
-func isNsV6(zd *zoneData, name string) (bool, error) {
-	msg, err := retryingLookup(zd, name, dns.TypeNS)
+func isNsV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
+	msg, err := retryingLookup(zd, zone, dns.TypeNS, logger)
 	if err != nil {
-		log.Fatal(err)
+		return false, fmt.Errorf("isNSV6 retryingLookup failed for zone: %w", err)
 	}
 
 	for _, rr := range msg.Answer {
@@ -124,22 +145,22 @@ func isNsV6(zd *zoneData, name string) (bool, error) {
 			if v, ok := zd.nsCache.Load(t.Ns); ok {
 				b := v.(bool)
 				if b {
-					log.Printf("isNsV6: got positive cache hit (%s): %s: %t", name, t.Ns, b)
+					logger.Info("isNsV6: got positive cache hit", "zone", zone, "ns", t.Ns)
 					return b, nil
 				}
-				log.Printf("isNsV6: got negative cache hit, continuing to look (%s): %s: %t", name, t.Ns, b)
+				logger.Info("isNsV6: got negative cache hit, continuing to look", "zone", zone, "ns", t.Ns)
 			}
 
-			msg, err = retryingLookup(zd, t.Ns, dns.TypeAAAA)
+			msg, err = retryingLookup(zd, t.Ns, dns.TypeAAAA, logger)
 			if err != nil {
-				return false, fmt.Errorf("isNsV6 AAAA (%s): %s: %w", name, t.Ns, err)
+				return false, fmt.Errorf("isNsV6 retryingLookup (AAAA) failed for NS %s: %w", t.Ns, err)
 			}
 			if len(msg.Answer) != 0 {
-				log.Printf("Found NS with AAAA (%s): %s", name, t.Ns)
+				logger.Info("Found NS with AAAA", "zone", zone, "ns", t.Ns)
 				zd.nsCache.Store(t.Ns, true)
 				return true, nil
 			} else {
-				log.Printf("NS missing AAAA (%s): %s", name, t.Ns)
+				logger.Info("NS missing AAAA", "zone", zone, "ns", t.Ns)
 				zd.nsCache.Store(t.Ns, false)
 			}
 		}
@@ -148,10 +169,10 @@ func isNsV6(zd *zoneData, name string) (bool, error) {
 	return false, nil
 }
 
-func isWwwV6(zd *zoneData, name string) (bool, error) {
-	msg, err := retryingLookup(zd, "www."+name, dns.TypeAAAA)
+func isWwwV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
+	msg, err := retryingLookup(zd, "www."+zone, dns.TypeAAAA, logger)
 	if err != nil {
-		return false, fmt.Errorf("isWwwwV6: %w", err)
+		return false, fmt.Errorf("isWwwwV6 retryingLookup (AAAA) failed: %w", err)
 	}
 
 	if len(msg.Answer) != 0 {
@@ -161,11 +182,11 @@ func isWwwV6(zd *zoneData, name string) (bool, error) {
 	return false, nil
 }
 
-func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, error) {
+func retryingLookup(zd *zoneData, name string, lookupType uint16, logger *slog.Logger) (*dns.Msg, error) {
 
 	err := zd.limiter.Wait(context.Background())
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("retryingLookup: limiter.Wait failed: %w", err)
 	}
 
 	m := new(dns.Msg)
@@ -179,7 +200,7 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 
 	// Retry over TCP if the response was truncated
 	if in.Truncated {
-		log.Printf("UDP query for '%s' was truncated, retrying over TCP", name)
+		logger.Info("UDP query was truncated, retrying over TCP", "name", name)
 		in, _, err = zd.tcpClient.Exchange(m, zd.resolver)
 		if err != nil {
 			return nil, fmt.Errorf("error looking up %s for '%s' over TCP: %w", dns.TypeToString[lookupType], name, err)
@@ -187,11 +208,11 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16) (*dns.Msg, err
 	}
 
 	if in.Rcode != dns.RcodeSuccess {
-		log.Printf("%s query for '%s' resulted in unsuccessful rcode: %s", dns.TypeToString[lookupType], name, dns.RcodeToString[in.Rcode])
+		logger.Info("query resulted in unsuccessful RCODE", "rtype", dns.TypeToString[lookupType], "name", name, "rcode", dns.RcodeToString[in.Rcode])
 	}
 
 	zd.rcodeCounterMutex.Lock()
-	zd.rcodeCounter[in.Rcode] += 1
+	zd.rcodeCounter[in.Rcode]++
 	zd.rcodeCounterMutex.Unlock()
 
 	return in, nil
@@ -211,7 +232,7 @@ func parseTransfer(transferZone string, zd *zoneData) error {
 	// Summarize zone names
 	for r := range c {
 		if r.Error != nil {
-			log.Fatal(r.Error)
+			return fmt.Errorf("parseTransfer: zone transfer failed: %w", r.Error)
 		}
 
 		for _, rr := range r.RR {
@@ -220,7 +241,7 @@ func parseTransfer(transferZone string, zd *zoneData) error {
 				if soa, ok := rr.(*dns.SOA); ok {
 					zd.zoneSerial = soa.Serial
 				} else {
-					log.Fatal("unable to parse out zone serial")
+					return errors.New("parseTransfer: unable to parse out zone serial")
 				}
 			}
 
@@ -259,7 +280,7 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 			if soa, ok := rr.(*dns.SOA); ok {
 				zd.zoneSerial = soa.Serial
 			} else {
-				log.Fatal("unable to parse out zone serial")
+				return errors.New("parseZonefile: unable to parse out zone serial")
 			}
 		}
 
@@ -291,6 +312,8 @@ func main() {
 	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of zones to check, -1 means no limit")
 	flag.Parse()
 
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
@@ -309,20 +332,21 @@ func main() {
 
 		err := parseTransfer(*zoneNameFlag, zd)
 		if err != nil {
-			log.Fatal(err)
+			logger.Error("parseTransfer failed", "error", err)
+			os.Exit(1)
 		}
 	} else {
 		fmt.Printf("reading zone '%s' from file %s\n", *zoneNameFlag, *zoneFileFlag)
 		err := parseZonefile(*zoneNameFlag, *zoneFileFlag, zd)
-
 		if err != nil {
-			log.Fatal(err)
+			logger.Error("parseZonefile failed", "error", err)
+			os.Exit(1)
 		}
 	}
 
 	for i := 0; i < *workersFlag; i++ {
 		wg.Add(1)
-		go queryWorker(i, zoneCh, &wg, zd)
+		go queryWorker(i, zoneCh, &wg, zd, logger)
 	}
 
 	zoneCounter := *zoneLimitFlag
@@ -359,8 +383,9 @@ func main() {
 	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter, zonesChecked, (float64(zd.wwwCounter)/float64(zonesChecked))*100)
 	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter, zonesChecked, (float64(zd.nsCounter)/float64(zonesChecked))*100)
 	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter, zonesChecked, (float64(zd.mxCounter)/float64(zonesChecked))*100)
-	fmt.Println("rcode summary:")
+	fmt.Println("RCODE summary:")
 	for _, rcode := range sortedRcodes {
 		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
 	}
+	fmt.Printf("Query timeouts: %d\n", zd.timeoutCounter.Load())
 }
