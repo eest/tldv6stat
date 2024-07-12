@@ -29,6 +29,7 @@ type zoneData struct {
 	resolver          string
 	rcodeCounterMutex sync.Mutex
 	rcodeCounter      map[int]uint64
+	zoneSerial        uint32
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData) {
@@ -214,6 +215,15 @@ func parseTransfer(transferZone string, zd *zoneData) error {
 		}
 
 		for _, rr := range r.RR {
+			// Note current zone serial
+			if rr.Header().Name == transferZone && rr.Header().Rrtype == dns.TypeSOA {
+				if soa, ok := rr.(*dns.SOA); ok {
+					zd.zoneSerial = soa.Serial
+				} else {
+					log.Fatal("unable to parse out zone serial")
+				}
+			}
+
 			// Only care about zone delegations
 			if rr.Header().Rrtype != dns.TypeNS {
 				continue
@@ -244,6 +254,15 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 
 	// Summarize zone names
 	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+		// Note zone serial
+		if rr.Header().Name == zoneName && rr.Header().Rrtype == dns.TypeSOA {
+			if soa, ok := rr.(*dns.SOA); ok {
+				zd.zoneSerial = soa.Serial
+			} else {
+				log.Fatal("unable to parse out zone serial")
+			}
+		}
+
 		// Only care about zone delegations
 		if rr.Header().Rrtype != dns.TypeNS {
 			continue
@@ -268,6 +287,8 @@ func main() {
 	var zoneNameFlag = flag.String("zone", "se.", "zone to investigate")
 	var resolverFlag = flag.String("resolver", "8.8.8.8:53", "resolver to query")
 	var zoneFileFlag = flag.String("file", "", "zone file to parse")
+	var workersFlag = flag.Int("workers", 10, "number of workers to start")
+	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of zones to check, -1 means no limit")
 	flag.Parse()
 
 	zoneCh := make(chan string)
@@ -280,8 +301,6 @@ func main() {
 		tcpClient:    &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
 		rcodeCounter: map[int]uint64{},
 	}
-
-	numWorkers := 10
 
 	var wg sync.WaitGroup
 
@@ -301,19 +320,20 @@ func main() {
 		}
 	}
 
-	for i := 0; i < numWorkers; i++ {
+	for i := 0; i < *workersFlag; i++ {
 		wg.Add(1)
 		go queryWorker(i, zoneCh, &wg, zd)
 	}
 
-	fmt.Println("sending work to workers...")
-	counter := 100
+	zoneCounter := *zoneLimitFlag
 	for zone := range zd.m {
-		if counter == 0 {
+		if zoneCounter == 0 {
 			break
 		}
 		zoneCh <- zone
-		counter -= 1
+		if zoneCounter > 0 {
+			zoneCounter -= 1
+		}
 	}
 
 	close(zoneCh)
@@ -325,13 +345,22 @@ func main() {
 	}
 	sort.Ints(sortedRcodes)
 
-	fmt.Printf("At %s the .se zone contains %d domains\n", time.Now().Format(time.RFC3339), len(zd.m))
-	fmt.Printf("%.2f%% have IPv6 on www\n", float64(zd.wwwCounter)/float64(len(zd.m)))
-	fmt.Printf("%.2f%% have IPv6 on one or more DNS\n", float64(zd.nsCounter)/float64(len(zd.m)))
-	fmt.Printf("%.2f have IPv6 on one or more MX\n", float64(zd.mxCounter)/float64(len(zd.m)))
+	var zonesChecked int
+	if *zoneLimitFlag > 0 {
+		zonesChecked = *zoneLimitFlag
+	} else {
+		zonesChecked = len(zd.m)
+	}
+
+	fmt.Printf("At %s the .se zone (serial: %d) contains %d domains\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.m))
+	if zonesChecked != len(zd.m) {
+		fmt.Printf("We limited the lookups to %d domains\n", zonesChecked)
+	}
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter, zonesChecked, (float64(zd.wwwCounter)/float64(zonesChecked))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter, zonesChecked, (float64(zd.nsCounter)/float64(zonesChecked))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter, zonesChecked, (float64(zd.mxCounter)/float64(zonesChecked))*100)
 	fmt.Println("rcode summary:")
 	for _, rcode := range sortedRcodes {
 		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
 	}
-
 }
