@@ -271,7 +271,6 @@ func parseTransfer(transferZone string, zd *zoneData) error {
 				continue
 			}
 
-			//zd.m[rr.Header().Name] = v6Status{}
 			zd.m[rr.Header().Name] = struct{}{}
 		}
 	}
