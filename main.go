@@ -20,7 +20,7 @@ import (
 type zoneData struct {
 	udpClient         *dns.Client
 	tcpClient         *dns.Client
-	m                 map[string]struct{}
+	zones             map[string]struct{}
 	wwwCounter        atomic.Uint64
 	nsCounter         atomic.Uint64
 	mxCounter         atomic.Uint64
@@ -271,7 +271,7 @@ func parseTransfer(transferZone string, zd *zoneData) error {
 				continue
 			}
 
-			zd.m[rr.Header().Name] = struct{}{}
+			zd.zones[rr.Header().Name] = struct{}{}
 		}
 	}
 
@@ -309,7 +309,7 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 			continue
 		}
 
-		zd.m[rr.Header().Name] = struct{}{}
+		zd.zones[rr.Header().Name] = struct{}{}
 	}
 	if err := zp.Err(); err != nil {
 		return fmt.Errorf("parseZoneFile: parser failed: %w", err)
@@ -333,7 +333,7 @@ func main() {
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
-		m:            map[string]struct{}{},
+		zones:        map[string]struct{}{},
 		limiter:      rate.NewLimiter(10, 1),
 		resolver:     *resolverFlag,
 		udpClient:    &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
@@ -368,7 +368,7 @@ func main() {
 
 	zoneLimit := *zoneLimitFlag
 	zoneCounter := 0
-	for zone := range zd.m {
+	for zone := range zd.zones {
 		if zoneLimit == 0 {
 			break
 		}
@@ -388,7 +388,7 @@ func main() {
 	}
 	sort.Ints(sortedRcodes)
 
-	fmt.Printf("At %s the .se zone (serial: %d) contains %d zones\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.m))
+	fmt.Printf("At %s the .se zone (serial: %d) contains %d zones\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.zones))
 	if *zoneLimitFlag > 0 {
 		fmt.Printf("lookups limited to %d zones\n", *zoneLimitFlag)
 	}
