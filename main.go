@@ -349,14 +349,16 @@ func main() {
 		go queryWorker(i, zoneCh, &wg, zd, logger)
 	}
 
-	zoneCounter := *zoneLimitFlag
+	zoneLimit := *zoneLimitFlag
+	zoneCounter := 0
 	for zone := range zd.m {
-		if zoneCounter == 0 {
+		if zoneLimit == 0 {
 			break
 		}
 		zoneCh <- zone
-		if zoneCounter > 0 {
-			zoneCounter -= 1
+		zoneCounter++
+		if zoneLimit > 0 {
+			zoneLimit -= 1
 		}
 	}
 
@@ -369,20 +371,13 @@ func main() {
 	}
 	sort.Ints(sortedRcodes)
 
-	var zonesChecked int
+	fmt.Printf("At %s the .se zone (serial: %d) contains %d zones\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.m))
 	if *zoneLimitFlag > 0 {
-		zonesChecked = *zoneLimitFlag
-	} else {
-		zonesChecked = len(zd.m)
+		fmt.Printf("lookups limited to %d zones\n", *zoneLimitFlag)
 	}
-
-	fmt.Printf("At %s the .se zone (serial: %d) contains %d domains\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.m))
-	if zonesChecked != len(zd.m) {
-		fmt.Printf("We limited the lookups to %d domains\n", zonesChecked)
-	}
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter, zonesChecked, (float64(zd.wwwCounter)/float64(zonesChecked))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter, zonesChecked, (float64(zd.nsCounter)/float64(zonesChecked))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter, zonesChecked, (float64(zd.mxCounter)/float64(zonesChecked))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter, zoneCounter, (float64(zd.wwwCounter)/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter, zoneCounter, (float64(zd.nsCounter)/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter, zoneCounter, (float64(zd.mxCounter)/float64(zoneCounter))*100)
 	fmt.Println("RCODE summary:")
 	for _, rcode := range sortedRcodes {
 		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
