@@ -33,13 +33,21 @@ type zoneData struct {
 	timeoutCounter    atomic.Uint64
 	zoneSerial        uint32
 	verbose           bool
+	wwwPercent        float64
+	nsPercent         float64
+	mxPercent         float64
+	sortedRcodes      []int
+	zoneCounter       int
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, logger *slog.Logger) {
 	defer wg.Done()
 
+	logger = logger.With("worker_id", id)
+
 	for zone := range zoneCh {
-		fmt.Printf("worker: %d, zone: %s\n", id, zone)
+
+		logger.Info("handling zone", "zone", zone)
 
 		mxIsV6, err := isMxV6(zd, zone, logger)
 		if err != nil {
@@ -318,6 +326,67 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	return nil
 }
 
+func run(resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, logger *slog.Logger) (*zoneData, error) {
+	zoneCh := make(chan string)
+
+	zd := &zoneData{
+		zones:        map[string]struct{}{},
+		limiter:      rate.NewLimiter(10, 1),
+		resolver:     resolver,
+		udpClient:    &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		tcpClient:    &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		rcodeCounter: map[int]uint64{},
+		verbose:      verbose,
+	}
+
+	var wg sync.WaitGroup
+
+	if zoneFile == "" {
+		logger.Info("fetching zonevia AXFR", "zone", zoneName)
+
+		err := parseTransfer(zoneName, zd)
+		if err != nil {
+			return nil, fmt.Errorf("parseTransfer failed: %w", err)
+		}
+	} else {
+		fmt.Printf("reading zone '%s' from file %s\n", zoneName, zoneFile)
+		err := parseZonefile(zoneName, zoneFile, zd)
+		if err != nil {
+			return nil, fmt.Errorf("parseZonefile failed: %w", err)
+		}
+	}
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go queryWorker(i, zoneCh, &wg, zd, logger)
+	}
+
+	for zone := range zd.zones {
+		if zoneLimit == 0 {
+			break
+		}
+		zoneCh <- zone
+		zd.zoneCounter++
+		if zoneLimit > 0 {
+			zoneLimit -= 1
+		}
+	}
+
+	close(zoneCh)
+	wg.Wait()
+
+	zd.wwwPercent = (float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100
+	zd.nsPercent = (float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100
+	zd.mxPercent = (float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100
+
+	for rcode := range zd.rcodeCounter {
+		zd.sortedRcodes = append(zd.sortedRcodes, rcode)
+	}
+	sort.Ints(zd.sortedRcodes)
+
+	return zd, nil
+}
+
 func main() {
 
 	var zoneNameFlag = flag.String("zone", "se.", "zone to investigate")
@@ -330,73 +399,21 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	zoneCh := make(chan string)
-
-	zd := &zoneData{
-		zones:        map[string]struct{}{},
-		limiter:      rate.NewLimiter(10, 1),
-		resolver:     *resolverFlag,
-		udpClient:    &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
-		tcpClient:    &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
-		rcodeCounter: map[int]uint64{},
-		verbose:      *verboseFlag,
+	zd, err := run(*resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, logger)
+	if err != nil {
+		logger.Error("run failed", "error", err)
+		os.Exit(1)
 	}
-
-	var wg sync.WaitGroup
-
-	if *zoneFileFlag == "" {
-		fmt.Printf("fetching zone '%s' via AXFR\n", *zoneNameFlag)
-
-		err := parseTransfer(*zoneNameFlag, zd)
-		if err != nil {
-			logger.Error("parseTransfer failed", "error", err)
-			os.Exit(1)
-		}
-	} else {
-		fmt.Printf("reading zone '%s' from file %s\n", *zoneNameFlag, *zoneFileFlag)
-		err := parseZonefile(*zoneNameFlag, *zoneFileFlag, zd)
-		if err != nil {
-			logger.Error("parseZonefile failed", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	for i := 0; i < *workersFlag; i++ {
-		wg.Add(1)
-		go queryWorker(i, zoneCh, &wg, zd, logger)
-	}
-
-	zoneLimit := *zoneLimitFlag
-	zoneCounter := 0
-	for zone := range zd.zones {
-		if zoneLimit == 0 {
-			break
-		}
-		zoneCh <- zone
-		zoneCounter++
-		if zoneLimit > 0 {
-			zoneLimit -= 1
-		}
-	}
-
-	close(zoneCh)
-	wg.Wait()
-
-	sortedRcodes := []int{}
-	for rcode := range zd.rcodeCounter {
-		sortedRcodes = append(sortedRcodes, rcode)
-	}
-	sort.Ints(sortedRcodes)
 
 	fmt.Printf("At %s the .se zone (serial: %d) contains %d zones\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.zones))
 	if *zoneLimitFlag > 0 {
 		fmt.Printf("lookups limited to %d zones\n", *zoneLimitFlag)
 	}
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter.Load(), zoneCounter, (float64(zd.wwwCounter.Load())/float64(zoneCounter))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more NS\n", zd.nsCounter.Load(), zoneCounter, (float64(zd.nsCounter.Load())/float64(zoneCounter))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter.Load(), zoneCounter, (float64(zd.mxCounter.Load())/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter.Load(), zd.zoneCounter, zd.wwwPercent)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more NS\n", zd.nsCounter.Load(), zd.zoneCounter, zd.nsPercent)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter.Load(), zd.zoneCounter, zd.mxPercent)
 	fmt.Println("RCODE summary:")
-	for _, rcode := range sortedRcodes {
+	for _, rcode := range zd.sortedRcodes {
 		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
 	}
 	fmt.Printf("Query timeouts: %d\n", zd.timeoutCounter.Load())
