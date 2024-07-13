@@ -32,6 +32,7 @@ type zoneData struct {
 	rcodeCounter      map[int]uint64
 	timeoutCounter    atomic.Uint64
 	zoneSerial        uint32
+	verbose           bool
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, logger *slog.Logger) {
@@ -96,7 +97,9 @@ func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 		if t, ok := rr.(*dns.MX); ok {
 			if t.Mx == "." && t.Preference == 0 {
 				if len(msg.Answer) == 1 {
-					logger.Info("skipping null MX (RFC 7505) record", "zone", zone)
+					if zd.verbose {
+						logger.Info("skipping null MX (RFC 7505) record", "zone", zone)
+					}
 					break
 				}
 				logger.Info("a domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "zone", zone)
@@ -105,10 +108,14 @@ func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 			if v, ok := zd.mxCache.Load(t.Mx); ok {
 				b := v.(bool)
 				if b {
-					logger.Info("isMxV6: got positive cache hit", "zone", zone, "mx", t.Mx)
+					if zd.verbose {
+						logger.Info("isMxV6: got positive cache hit", "zone", zone, "mx", t.Mx)
+					}
 					return b, nil
 				}
-				logger.Info("isMxV6: got negative cache hit, continuing to look", "zone", zone, "mx", t.Mx)
+				if zd.verbose {
+					logger.Info("isMxV6: got negative cache hit, continuing to look", "zone", zone, "mx", t.Mx)
+				}
 				continue
 			}
 
@@ -117,11 +124,15 @@ func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 				return false, fmt.Errorf("isMxV6 retryingLookup (AAAA) failed for MX name %s: %w", t.Mx, err)
 			}
 			if len(msg.Answer) != 0 {
-				logger.Info("found MX with AAAA", "zone", zone, "mx", t.Mx)
+				if zd.verbose {
+					logger.Info("found MX with AAAA", "zone", zone, "mx", t.Mx)
+				}
 				zd.mxCache.Store(t.Mx, true)
 				return true, nil
 			} else {
-				logger.Info("MX missing AAAA", "zone", zone, "mx", t.Mx)
+				if zd.verbose {
+					logger.Info("MX missing AAAA", "zone", zone, "mx", t.Mx)
+				}
 				zd.mxCache.Store(t.Mx, false)
 			}
 		}
@@ -142,10 +153,14 @@ func isNsV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 			if v, ok := zd.nsCache.Load(t.Ns); ok {
 				b := v.(bool)
 				if b {
-					logger.Info("isNsV6: got positive cache hit", "zone", zone, "ns", t.Ns)
+					if zd.verbose {
+						logger.Info("isNsV6: got positive cache hit", "zone", zone, "ns", t.Ns)
+					}
 					return b, nil
 				}
-				logger.Info("isNsV6: got negative cache hit, continuing to look", "zone", zone, "ns", t.Ns)
+				if zd.verbose {
+					logger.Info("isNsV6: got negative cache hit, continuing to look", "zone", zone, "ns", t.Ns)
+				}
 			}
 
 			msg, err = retryingLookup(zd, t.Ns, dns.TypeAAAA, logger)
@@ -153,11 +168,15 @@ func isNsV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 				return false, fmt.Errorf("isNsV6 retryingLookup (AAAA) failed for NS %s: %w", t.Ns, err)
 			}
 			if len(msg.Answer) != 0 {
-				logger.Info("found NS with AAAA", "zone", zone, "ns", t.Ns)
+				if zd.verbose {
+					logger.Info("found NS with AAAA", "zone", zone, "ns", t.Ns)
+				}
 				zd.nsCache.Store(t.Ns, true)
 				return true, nil
 			} else {
-				logger.Info("NS missing AAAA", "zone", zone, "ns", t.Ns)
+				if zd.verbose {
+					logger.Info("NS missing AAAA", "zone", zone, "ns", t.Ns)
+				}
 				zd.nsCache.Store(t.Ns, false)
 			}
 		}
@@ -307,6 +326,7 @@ func main() {
 	var zoneFileFlag = flag.String("file", "", "zone file to parse")
 	var workersFlag = flag.Int("workers", 10, "number of workers to start")
 	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of zones to check, -1 means no limit")
+	var verboseFlag = flag.Bool("verbose", false, "enable verbose logging")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -320,6 +340,7 @@ func main() {
 		udpClient:    &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
 		tcpClient:    &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
 		rcodeCounter: map[int]uint64{},
+		verbose:      *verboseFlag,
 	}
 
 	var wg sync.WaitGroup
