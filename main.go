@@ -99,7 +99,7 @@ func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 					logger.Info("skipping null MX (RFC 7505) record", "zone", zone)
 					break
 				}
-				logger.Info("A domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "zone", zone)
+				logger.Info("a domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "zone", zone)
 				continue
 			}
 			if v, ok := zd.mxCache.Load(t.Mx); ok {
@@ -117,7 +117,7 @@ func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 				return false, fmt.Errorf("isMxV6 retryingLookup (AAAA) failed for MX name %s: %w", t.Mx, err)
 			}
 			if len(msg.Answer) != 0 {
-				logger.Info("Found MX with AAAA", "zone", zone, "mx", t.Mx)
+				logger.Info("found MX with AAAA", "zone", zone, "mx", t.Mx)
 				zd.mxCache.Store(t.Mx, true)
 				return true, nil
 			} else {
@@ -153,7 +153,7 @@ func isNsV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 				return false, fmt.Errorf("isNsV6 retryingLookup (AAAA) failed for NS %s: %w", t.Ns, err)
 			}
 			if len(msg.Answer) != 0 {
-				logger.Info("Found NS with AAAA", "zone", zone, "ns", t.Ns)
+				logger.Info("found NS with AAAA", "zone", zone, "ns", t.Ns)
 				zd.nsCache.Store(t.Ns, true)
 				return true, nil
 			} else {
@@ -179,7 +179,7 @@ func isWwwV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 	return false, nil
 }
 
-func retryingLookup(zd *zoneData, name string, lookupType uint16, logger *slog.Logger) (*dns.Msg, error) {
+func retryingLookup(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dns.Msg, error) {
 
 	err := zd.limiter.Wait(context.Background())
 	if err != nil {
@@ -187,25 +187,25 @@ func retryingLookup(zd *zoneData, name string, lookupType uint16, logger *slog.L
 	}
 
 	m := new(dns.Msg)
-	m.SetQuestion(name, lookupType)
+	m.SetQuestion(name, rtype)
 	m.SetEdns0(4096, false)
 
 	in, _, err := zd.udpClient.Exchange(m, zd.resolver)
 	if err != nil {
-		return nil, fmt.Errorf("error looking up %s for '%s' over UDP: %w", dns.TypeToString[lookupType], name, err)
+		return nil, fmt.Errorf("error looking up %s for '%s' over UDP: %w", dns.TypeToString[rtype], name, err)
 	}
 
 	// Retry over TCP if the response was truncated
 	if in.Truncated {
-		logger.Info("UDP query was truncated, retrying over TCP", "name", name)
+		logger.Info("UDP query was truncated, retrying over TCP", "name", name, "rtype", dns.TypeToString[rtype])
 		in, _, err = zd.tcpClient.Exchange(m, zd.resolver)
 		if err != nil {
-			return nil, fmt.Errorf("error looking up %s for '%s' over TCP: %w", dns.TypeToString[lookupType], name, err)
+			return nil, fmt.Errorf("error looking up %s for '%s' over TCP: %w", dns.TypeToString[rtype], name, err)
 		}
 	}
 
 	if in.Rcode != dns.RcodeSuccess {
-		logger.Info("query resulted in unsuccessful RCODE", "rtype", dns.TypeToString[lookupType], "name", name, "rcode", dns.RcodeToString[in.Rcode])
+		logger.Info("query resulted in unsuccessful RCODE", "rtype", dns.TypeToString[rtype], "name", name, "rcode", dns.RcodeToString[in.Rcode])
 	}
 
 	zd.rcodeCounterMutex.Lock()
