@@ -394,7 +394,7 @@ func main() {
 		fmt.Printf("lookups limited to %d zones\n", *zoneLimitFlag)
 	}
 	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter.Load(), zoneCounter, (float64(zd.wwwCounter.Load())/float64(zoneCounter))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter.Load(), zoneCounter, (float64(zd.nsCounter.Load())/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more NS\n", zd.nsCounter.Load(), zoneCounter, (float64(zd.nsCounter.Load())/float64(zoneCounter))*100)
 	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter.Load(), zoneCounter, (float64(zd.mxCounter.Load())/float64(zoneCounter))*100)
 	fmt.Println("RCODE summary:")
 	for _, rcode := range sortedRcodes {
