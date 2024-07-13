@@ -21,10 +21,9 @@ type zoneData struct {
 	udpClient         *dns.Client
 	tcpClient         *dns.Client
 	m                 map[string]struct{}
-	wwwCounter        uint64
-	nsCounter         uint64
-	mxCounter         uint64
-	mutex             sync.Mutex
+	wwwCounter        atomic.Uint64
+	nsCounter         atomic.Uint64
+	mxCounter         atomic.Uint64
 	nsCache           sync.Map
 	mxCache           sync.Map
 	limiter           *rate.Limiter
@@ -74,17 +73,15 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 			}
 		}
 
-		zd.mutex.Lock()
 		if mxIsV6 {
-			zd.mxCounter++
+			zd.mxCounter.Add(1)
 		}
 		if nsIsV6 {
-			zd.nsCounter++
+			zd.nsCounter.Add(1)
 		}
 		if wwwIsV6 {
-			zd.wwwCounter++
+			zd.wwwCounter.Add(1)
 		}
-		zd.mutex.Unlock()
 	}
 }
 
@@ -375,9 +372,9 @@ func main() {
 	if *zoneLimitFlag > 0 {
 		fmt.Printf("lookups limited to %d zones\n", *zoneLimitFlag)
 	}
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter, zoneCounter, (float64(zd.wwwCounter)/float64(zoneCounter))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter, zoneCounter, (float64(zd.nsCounter)/float64(zoneCounter))*100)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter, zoneCounter, (float64(zd.mxCounter)/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter.Load(), zoneCounter, (float64(zd.wwwCounter.Load())/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more DNS\n", zd.nsCounter.Load(), zoneCounter, (float64(zd.nsCounter.Load())/float64(zoneCounter))*100)
+	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter.Load(), zoneCounter, (float64(zd.mxCounter.Load())/float64(zoneCounter))*100)
 	fmt.Println("RCODE summary:")
 	for _, rcode := range sortedRcodes {
 		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
