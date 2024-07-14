@@ -261,13 +261,13 @@ func retryingLookup(zd *zoneData, name string, rtype uint16, logger *slog.Logger
 	return in, nil
 }
 
-func parseTransfer(transferZone string, zd *zoneData) error {
+func parseTransfer(axfrServer string, transferZone string, zd *zoneData) error {
 
 	t := new(dns.Transfer)
 	m := new(dns.Msg)
 	m.SetAxfr(transferZone)
 	// Do zone transfer
-	c, err := t.In(m, "zonedata.iis.se:53")
+	c, err := t.In(m, axfrServer)
 	if err != nil {
 		return fmt.Errorf("doTransfer: unable to do transfer: %w", err)
 	}
@@ -345,7 +345,7 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	return nil
 }
 
-func run(resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, logger *slog.Logger) (*zoneData, error) {
+func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, logger *slog.Logger) (*zoneData, error) {
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
@@ -361,9 +361,9 @@ func run(resolver string, zoneName string, zoneFile string, workers int, zoneLim
 	var wg sync.WaitGroup
 
 	if zoneFile == "" {
-		logger.Info("fetching zonevia AXFR", "zone", zoneName)
+		logger.Info("fetching zone via AXFR", "zone", zoneName, "axfr_server", axfrServer)
 
-		err := parseTransfer(zoneName, zd)
+		err := parseTransfer(axfrServer, zoneName, zd)
 		if err != nil {
 			return nil, fmt.Errorf("parseTransfer failed: %w", err)
 		}
@@ -409,6 +409,7 @@ func run(resolver string, zoneName string, zoneFile string, workers int, zoneLim
 func main() {
 
 	var zoneNameFlag = flag.String("zone", "se.", "zone to investigate")
+	var axfrServerFlag = flag.String("axfr-server", "zonedata.iis.se:53", "server to transfer zone from")
 	var resolverFlag = flag.String("resolver", "8.8.8.8:53", "resolver to query")
 	var zoneFileFlag = flag.String("file", "", "zone file to parse")
 	var workersFlag = flag.Int("workers", 10, "number of workers to start")
@@ -418,7 +419,7 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	zd, err := run(*resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, logger)
+	zd, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, logger)
 	if err != nil {
 		logger.Error("run failed", "error", err)
 		os.Exit(1)
