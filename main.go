@@ -47,40 +47,59 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 	for zone := range zoneCh {
 
+		var err error
+		var mxIsV6, nsIsV6, wwwIsV6 bool
+
+		var zoneWg sync.WaitGroup
+
 		logger.Info("handling zone", "zone", zone)
 
-		mxIsV6, err := isMxV6(zd, zone, logger)
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				logger.Error("mxIsV6 query timed out", "zone", zone)
-				zd.timeoutCounter.Add(1)
-			} else {
-				logger.Error("isMxV6 failed", "error", err, "zone", zone)
-				os.Exit(1)
+		zoneWg.Add(1)
+		go func() {
+			defer zoneWg.Done()
+			mxIsV6, err = isMxV6(zd, zone, logger)
+			if err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					logger.Error("mxIsV6 query timed out", "zone", zone)
+					zd.timeoutCounter.Add(1)
+				} else {
+					logger.Error("isMxV6 failed", "error", err, "zone", zone)
+					os.Exit(1)
+				}
 			}
-		}
+		}()
 
-		nsIsV6, err := isNsV6(zd, zone, logger)
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				logger.Error("nsIsV6 query timed out", "zone", zone)
-				zd.timeoutCounter.Add(1)
-			} else {
-				logger.Error("nsIsV6 failed", "error", err, "zone", zone)
-				os.Exit(1)
+		zoneWg.Add(1)
+		go func() {
+			defer zoneWg.Done()
+			nsIsV6, err = isNsV6(zd, zone, logger)
+			if err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					logger.Error("nsIsV6 query timed out", "zone", zone)
+					zd.timeoutCounter.Add(1)
+				} else {
+					logger.Error("nsIsV6 failed", "error", err, "zone", zone)
+					os.Exit(1)
+				}
 			}
-		}
+		}()
 
-		wwwIsV6, err := isWwwV6(zd, zone, logger)
-		if err != nil {
-			if errors.Is(err, os.ErrDeadlineExceeded) {
-				logger.Error("wwwIsV6 query timed out", "zone", zone)
-				zd.timeoutCounter.Add(1)
-			} else {
-				logger.Error("wwwIsV6 failed", "error", err, "zone", zone)
-				os.Exit(1)
+		zoneWg.Add(1)
+		go func() {
+			defer zoneWg.Done()
+			wwwIsV6, err = isWwwV6(zd, zone, logger)
+			if err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					logger.Error("wwwIsV6 query timed out", "zone", zone)
+					zd.timeoutCounter.Add(1)
+				} else {
+					logger.Error("wwwIsV6 failed", "error", err, "zone", zone)
+					os.Exit(1)
+				}
 			}
-		}
+		}()
+
+		zoneWg.Wait()
 
 		if mxIsV6 {
 			zd.mxCounter.Add(1)
