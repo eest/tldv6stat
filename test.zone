@@ -1,0 +1,10 @@
+test.			172800	IN	SOA	mname.test. mbox.test. 2024071007 1800 1800 864000 7200
+test.			172800	IN	NS	a.ns.test.
+test.			172800	IN	NS	b.ns.test.
+a.ns.test.		172800	IN	AAAA	::1
+b.ns.test.		172800	IN	AAAA	::1
+test.			172800	IN	TXT	"test zone"
+ok.test.		86400	IN	NS	www.ok.test.
+ok.test.		86400	IN	NS	www.ok.test.
+www.ok.test.		86400	IN	AAAA	::1
+test.			172800	IN	SOA	mname.test. mbox.test. 2024071007 1800 1800 864000 7200

@@ -236,6 +236,10 @@ func retryingLookup(zd *zoneData, name string, rtype uint16, logger *slog.Logger
 	m.SetQuestion(name, rtype)
 	m.SetEdns0(4096, false)
 
+	if zd.verbose {
+		logger.Info("sending UDP query", "name", name, "rtype", dns.TypeToString[rtype])
+	}
+
 	in, _, err := zd.udpClient.Exchange(m, zd.resolver)
 	if err != nil {
 		return nil, fmt.Errorf("error looking up %s for '%s' over UDP: %w", dns.TypeToString[rtype], name, err)
@@ -374,6 +378,8 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 			return nil, fmt.Errorf("parseZonefile failed: %w", err)
 		}
 	}
+
+	logger = logger.With("resolver", resolver)
 
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
