@@ -47,7 +47,6 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 	for zone := range zoneCh {
 
-		var err error
 		var mxIsV6, nsIsV6, wwwIsV6 bool
 
 		var zoneWg sync.WaitGroup
@@ -56,6 +55,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 		zoneWg.Add(1)
 		go func() {
+			var err error
 			defer zoneWg.Done()
 			mxIsV6, err = isMxV6(zd, zone, logger)
 			if err != nil {
@@ -71,6 +71,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 		zoneWg.Add(1)
 		go func() {
+			var err error
 			defer zoneWg.Done()
 			nsIsV6, err = isNsV6(zd, zone, logger)
 			if err != nil {
@@ -86,6 +87,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 		zoneWg.Add(1)
 		go func() {
+			var err error
 			defer zoneWg.Done()
 			wwwIsV6, err = isWwwV6(zd, zone, logger)
 			if err != nil {
