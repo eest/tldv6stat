@@ -369,6 +369,8 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (*zoneData, error) {
 	zoneCh := make(chan string)
 
+	zoneName = dns.Fqdn(zoneName)
+
 	if burstlimit < 1 {
 		return nil, fmt.Errorf("run: invalid burst limit: %d", burstlimit)
 	}
@@ -455,12 +457,12 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 
 func main() {
 
-	var zoneNameFlag = flag.String("zone", "se.", "zone to investigate")
+	var zoneNameFlag = flag.String("zone", "se", "zone to investigate")
 	var axfrServerFlag = flag.String("axfr-server", "zonedata.iis.se:53", "server to transfer zone from")
 	var resolverFlag = flag.String("resolver", "8.8.8.8:53", "resolver to query")
 	var zoneFileFlag = flag.String("file", "", "zone file to parse")
 	var workersFlag = flag.Int("workers", 10, "number of workers to start")
-	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of zones to check, -1 means no limit")
+	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of delegated zones to check, -1 means no limit")
 	var verboseFlag = flag.Bool("verbose", false, "enable verbose logging")
 	var dialTimeoutFlag = flag.String("dial-timeout", "0s", "DNS client dial timeout, 0 means using the miekg/dns default")
 	var readTimeoutFlag = flag.String("read-timeout", "0s", "DNS client read timeout, 0 means using the miekg/dns default")
