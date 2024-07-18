@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"runtime"
 	"sync"
 	"testing"
 
@@ -16,7 +15,7 @@ func sendNotImp(t *testing.T, w dns.ResponseWriter, r *dns.Msg) {
 	m.SetRcode(r, dns.RcodeNotImplemented)
 	err := w.WriteMsg(m)
 	if err != nil {
-		t.Errorf("sendNotImp: WriteMsg failed: %s", err)
+		t.Errorf("sendNotImp: WriteMsg failed for %s (%s): %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 	}
 }
 
@@ -25,7 +24,8 @@ func sendRefused(t *testing.T, w dns.ResponseWriter, r *dns.Msg) {
 	m.SetRcode(r, dns.RcodeRefused)
 	err := w.WriteMsg(m)
 	if err != nil {
-		t.Errorf("sendRefused: WriteMsg failed: %s", err)
+		t.Errorf("sendRefused: WriteMsg failed for %s (%s): %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+
 	}
 }
 
@@ -81,7 +81,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			wg.Wait()
 		case dns.TypeAAAA:
 			switch r.Question[0].Name {
-			case "www.ok.test.":
+			case "www.ok.test.", "www.ok-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -94,16 +94,24 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				m.Answer = append(m.Answer, aaaa)
 				err := w.WriteMsg(m)
 				if err != nil {
-					t.Errorf("AAAA WriteMsg failed: %s", err)
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
 				return
+			case "www.onlyv4.test.", "www.onlyv4-2.test.":
+				// Respond with empty NOERROR
+				m := new(dns.Msg)
+				m.SetReply(r)
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
 			default:
 				sendRefused(t, w, r)
 				return
 			}
 		case dns.TypeMX:
 			switch r.Question[0].Name {
-			case "ok.test.":
+			case "ok.test.", "ok-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -115,41 +123,69 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 
 				err := w.WriteMsg(m)
 				if err != nil {
-					t.Errorf("MX WriteMsg failed: %s", err)
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
 				return
+			case "onlyv4.test.", "onlyv4-2.test.":
+				// Has MX, but only pointing to A
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				mx := new(dns.MX)
+				mx.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+				mx.Preference = 10
+				mx.Mx = "www.onlyv4.test."
+				m.Answer = append(m.Answer, mx)
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
 			default:
 				sendRefused(t, w, r)
 				return
 			}
 		case dns.TypeNS:
 			switch r.Question[0].Name {
-			case "ok.test.":
+			case "ok.test.", "ok-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
 				ns := new(dns.NS)
 				ns.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 3600}
 				ns.Ns = "www.ok.test."
-
 				m.Answer = append(m.Answer, ns)
 
 				err := w.WriteMsg(m)
 				if err != nil {
-					t.Errorf("MX WriteMsg failed: %s", err)
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
 				return
+			case "onlyv4.test.", "onlyv4-2.test.":
+				// Has NS, but only pointing to A
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				ns := new(dns.NS)
+				ns.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 3600}
+				ns.Ns = "www.onlyv4.test."
+				m.Answer = append(m.Answer, ns)
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
 			default:
 				sendRefused(t, w, r)
 				return
 			}
 		default:
-			sendNotImp(t, w, r)
+			sendRefused(t, w, r)
 			return
 		}
 
 		// Catch anything else
-		sendNotImp(t, w, r)
+		sendRefused(t, w, r)
 	}
 
 }
@@ -215,9 +251,17 @@ func TestRun(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", runtime.NumCPU(), -1, true, logger)
+	// Single worker to make sure we use cached responses
+	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, logger)
 	if err != nil {
-		logger.Error("run failed", "error", err)
+		logger.Error("run with single worker failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Multiple worker to test concurrency
+	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, logger)
+	if err != nil {
+		logger.Error("run with multiple workers failed", "error", err)
 		os.Exit(1)
 	}
 }
