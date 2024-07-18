@@ -267,14 +267,14 @@ func TestRun(t *testing.T) {
 	}
 
 	// Single worker to make sure we use cached responses
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, logger)
+	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, 10, 1, logger)
 	if err != nil {
 		logger.Error("run with single worker failed", "error", err)
 		os.Exit(1)
 	}
 
 	// Multiple worker to test concurrency
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, logger)
+	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, 10, 1, logger)
 	if err != nil {
 		logger.Error("run with multiple workers failed", "error", err)
 		os.Exit(1)

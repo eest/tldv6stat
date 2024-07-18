@@ -366,12 +366,21 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	return nil
 }
 
-func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, logger *slog.Logger) (*zoneData, error) {
+func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (*zoneData, error) {
 	zoneCh := make(chan string)
+
+	if burstlimit < 1 {
+		return nil, fmt.Errorf("run: invalid burst limit: %d", burstlimit)
+	}
+
+	if ratelimit == 0 {
+		logger.Info("allowing infinite DNS request rate")
+		ratelimit = rate.Inf
+	}
 
 	zd := &zoneData{
 		zones:        map[string]struct{}{},
-		limiter:      rate.NewLimiter(10, 1),
+		limiter:      rate.NewLimiter(ratelimit, burstlimit),
 		resolver:     resolver,
 		udpClient:    &dns.Client{},
 		tcpClient:    &dns.Client{Net: "tcp"},
@@ -456,6 +465,8 @@ func main() {
 	var dialTimeoutFlag = flag.String("dial-timeout", "0s", "DNS client dial timeout, 0 means using the miekg/dns default")
 	var readTimeoutFlag = flag.String("read-timeout", "0s", "DNS client read timeout, 0 means using the miekg/dns default")
 	var writeTimeoutFlag = flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
+	var ratelimitFlag = flag.Float64("ratelimit-rate", 10, "DNS requests allowed per second, 0 means no limit")
+	var burstlimitFlag = flag.Int("ratelimit-burst", 1, "DNS request burst limit, must be at least 1")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -478,7 +489,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	zd, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, logger)
+	ratelimit := rate.Limit(*ratelimitFlag)
+
+	zd, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, logger)
 	if err != nil {
 		logger.Error("run failed", "error", err)
 		os.Exit(1)
