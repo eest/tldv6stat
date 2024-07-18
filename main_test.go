@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -105,6 +106,9 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				if err != nil {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
+			case "www.timeout.test.":
+				// Do not respond
+				return
 			default:
 				sendRefused(t, w, r)
 				return
@@ -141,6 +145,9 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				if err != nil {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
+			case "timeout.test.":
+				// Do not respond
+				return
 			default:
 				sendRefused(t, w, r)
 				return
@@ -175,6 +182,9 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				if err != nil {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
+			case "timeout.test.":
+				// Do not respond
+				return
 			default:
 				sendRefused(t, w, r)
 				return
@@ -251,15 +261,20 @@ func TestRun(t *testing.T) {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
+	timeout, err := time.ParseDuration("0s")
+	if err != nil {
+		t.Error("unable to parse duration")
+	}
+
 	// Single worker to make sure we use cached responses
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, logger)
+	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, logger)
 	if err != nil {
 		logger.Error("run with single worker failed", "error", err)
 		os.Exit(1)
 	}
 
 	// Multiple worker to test concurrency
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, logger)
+	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, logger)
 	if err != nil {
 		logger.Error("run with multiple workers failed", "error", err)
 		os.Exit(1)

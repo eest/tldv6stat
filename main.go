@@ -364,17 +364,32 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	return nil
 }
 
-func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, logger *slog.Logger) (*zoneData, error) {
+func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, logger *slog.Logger) (*zoneData, error) {
 	zoneCh := make(chan string)
 
 	zd := &zoneData{
 		zones:        map[string]struct{}{},
 		limiter:      rate.NewLimiter(10, 1),
 		resolver:     resolver,
-		udpClient:    &dns.Client{DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
-		tcpClient:    &dns.Client{Net: "tcp", DialTimeout: time.Second * 60, ReadTimeout: time.Second * 60, WriteTimeout: time.Second * 60},
+		udpClient:    &dns.Client{},
+		tcpClient:    &dns.Client{Net: "tcp"},
 		rcodeCounter: map[int]uint64{},
 		verbose:      verbose,
+	}
+
+	if dialTimeout != 0 {
+		zd.udpClient.DialTimeout = dialTimeout
+		zd.tcpClient.DialTimeout = dialTimeout
+	}
+
+	if readTimeout != 0 {
+		zd.udpClient.ReadTimeout = readTimeout
+		zd.tcpClient.ReadTimeout = readTimeout
+	}
+
+	if writeTimeout != 0 {
+		zd.udpClient.WriteTimeout = writeTimeout
+		zd.tcpClient.WriteTimeout = writeTimeout
 	}
 
 	var wg sync.WaitGroup
@@ -436,11 +451,32 @@ func main() {
 	var workersFlag = flag.Int("workers", 10, "number of workers to start")
 	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of zones to check, -1 means no limit")
 	var verboseFlag = flag.Bool("verbose", false, "enable verbose logging")
+	var dialTimeoutFlag = flag.String("dial-timeout", "0s", "DNS client dial timeout, 0 means using the miekg/dns default")
+	var readTimeoutFlag = flag.String("read-timeout", "0s", "DNS client read timeout, 0 means using the miekg/dns default")
+	var writeTimeoutFlag = flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	zd, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, logger)
+	dialTimeout, err := time.ParseDuration(*dialTimeoutFlag)
+	if err != nil {
+		logger.Error("unable to parse dialTimeout", "error", err)
+		os.Exit(1)
+	}
+
+	readTimeout, err := time.ParseDuration(*readTimeoutFlag)
+	if err != nil {
+		logger.Error("unable to parse readTimeout", "error", err)
+		os.Exit(1)
+	}
+
+	writeTimeout, err := time.ParseDuration(*writeTimeoutFlag)
+	if err != nil {
+		logger.Error("unable to parse writeTimeout", "error", err)
+		os.Exit(1)
+	}
+
+	zd, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, logger)
 	if err != nil {
 		logger.Error("run failed", "error", err)
 		os.Exit(1)
