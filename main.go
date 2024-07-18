@@ -120,6 +120,11 @@ func isMxV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 		return false, fmt.Errorf("isMxV6: retryingLookup failed for zone: %w", err)
 	}
 
+	// If we received non-successful response dont bother with looking at answer section.
+	if msg.Rcode != dns.RcodeSuccess {
+		return false, nil
+	}
+
 	for _, rr := range msg.Answer {
 		if t, ok := rr.(*dns.MX); ok {
 			if t.Mx == "." && t.Preference == 0 {
@@ -174,6 +179,11 @@ func isNsV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 		return false, fmt.Errorf("isNSV6 retryingLookup failed for zone: %w", err)
 	}
 
+	// If we received non-successful response dont bother with looking at answer section.
+	if msg.Rcode != dns.RcodeSuccess {
+		return false, nil
+	}
+
 	for _, rr := range msg.Answer {
 		if t, ok := rr.(*dns.NS); ok {
 
@@ -216,6 +226,11 @@ func isWwwV6(zd *zoneData, zone string, logger *slog.Logger) (bool, error) {
 	msg, err := retryingLookup(zd, "www."+zone, dns.TypeAAAA, logger)
 	if err != nil {
 		return false, fmt.Errorf("isWwwwV6 retryingLookup (AAAA) failed: %w", err)
+	}
+
+	// If we received non-successful response dont bother with looking at answer section.
+	if msg.Rcode != dns.RcodeSuccess {
+		return false, nil
 	}
 
 	if len(msg.Answer) != 0 {
