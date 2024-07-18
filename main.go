@@ -7,9 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,11 +43,11 @@ type zoneData struct {
 type stats struct {
 	ZoneName      string            `json:"zone_name"`
 	ZoneSerial    uint32            `json:"zone_serial"`
-	WWWPercent    float64           `json:"www_percent"`
+	WWWPercent    roundedFloat      `json:"www_percent"`
 	WWWNum        uint64            `json:"www_num"`
-	NSPercent     float64           `json:"ns_percent"`
+	NSPercent     roundedFloat      `json:"ns_percent"`
 	NSNum         uint64            `json:"ns_num"`
-	MXPercent     float64           `json:"mx_percent"`
+	MXPercent     roundedFloat      `json:"mx_percent"`
 	MXNum         uint64            `json:"mx_num"`
 	NumUDPQueries uint64            `json:"num_udp_queries"`
 	NumTCPQueries uint64            `json:"num_tcp_queries"`
@@ -56,19 +56,22 @@ type stats struct {
 	QueryTimeouts uint64            `json:"query_timeouts"`
 }
 
-func zdToStats(zd *zoneData) stats {
-	wwwPercent := (float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100
-	nsPercent := (float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100
-	mxPercent := (float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100
+// Float suitable for the JSON statistics
+type roundedFloat float64
 
+func (r roundedFloat) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.FormatFloat(float64(r), 'f', 2, 64)), nil
+}
+
+func zdToStats(zd *zoneData) stats {
 	s := stats{
 		ZoneName:      zd.zoneName,
 		ZoneSerial:    zd.zoneSerial,
-		WWWPercent:    math.Round(wwwPercent*100) / 100,
+		WWWPercent:    roundedFloat((float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100),
 		WWWNum:        zd.wwwCounter.Load(),
-		NSPercent:     math.Round(nsPercent*100) / 100,
+		NSPercent:     roundedFloat((float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100),
 		NSNum:         zd.nsCounter.Load(),
-		MXPercent:     math.Round(mxPercent*100) / 100,
+		MXPercent:     roundedFloat((float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100),
 		MXNum:         zd.mxCounter.Load(),
 		NumUDPQueries: zd.udpCounter.Load(),
 		NumTCPQueries: zd.tcpCounter.Load(),
