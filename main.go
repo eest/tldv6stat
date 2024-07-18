@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,8 @@ type zoneData struct {
 	wwwCounter        atomic.Uint64
 	nsCounter         atomic.Uint64
 	mxCounter         atomic.Uint64
+	udpCounter        atomic.Uint64
+	tcpCounter        atomic.Uint64
 	nsCache           sync.Map
 	mxCache           sync.Map
 	limiter           *rate.Limiter
@@ -33,11 +36,54 @@ type zoneData struct {
 	timeoutCounter    atomic.Uint64
 	zoneSerial        uint32
 	verbose           bool
-	wwwPercent        float64
-	nsPercent         float64
-	mxPercent         float64
-	sortedRcodes      []int
-	zoneCounter       int
+	zoneCounter       uint64
+	zoneName          string
+}
+
+type stats struct {
+	ZoneName      string            `json:"zone_name"`
+	ZoneSerial    uint32            `json:"zone_serial"`
+	WWWPercent    float64           `json:"www_percent"`
+	WWWNum        uint64            `json:"www_num"`
+	NSPercent     float64           `json:"ns_percent"`
+	NSNum         uint64            `json:"ns_num"`
+	MXPercent     float64           `json:"mx_percent"`
+	MXNum         uint64            `json:"mx_num"`
+	NumUDPQueries uint64            `json:"num_udp_queries"`
+	NumTCPQueries uint64            `json:"num_tcp_queries"`
+	RCodes        map[string]uint64 `json:"rcodes"`
+	NumChildZones uint64            `json:"num_child_zones"`
+	QueryTimeouts uint64            `json:"query_timeouts"`
+}
+
+func zdToStats(zd *zoneData) stats {
+	wwwPercent := (float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100
+	nsPercent := (float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100
+	mxPercent := (float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100
+
+	s := stats{
+		ZoneName:      zd.zoneName,
+		ZoneSerial:    zd.zoneSerial,
+		WWWPercent:    math.Round(wwwPercent*100) / 100,
+		WWWNum:        zd.wwwCounter.Load(),
+		NSPercent:     math.Round(nsPercent*100) / 100,
+		NSNum:         zd.nsCounter.Load(),
+		MXPercent:     math.Round(mxPercent*100) / 100,
+		MXNum:         zd.mxCounter.Load(),
+		NumUDPQueries: zd.udpCounter.Load(),
+		NumTCPQueries: zd.tcpCounter.Load(),
+		NumChildZones: zd.zoneCounter,
+		QueryTimeouts: zd.timeoutCounter.Load(),
+	}
+
+	rcodes := map[string]uint64{}
+	for rcode, counter := range zd.rcodeCounter {
+		rcodes[dns.RcodeToString[rcode]] = counter
+	}
+
+	s.RCodes = rcodes
+
+	return s
 }
 
 func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, logger *slog.Logger) {
@@ -257,6 +303,7 @@ func retryingLookup(zd *zoneData, name string, rtype uint16, logger *slog.Logger
 		logger.Info("sending UDP query", "name", name, "rtype", dns.TypeToString[rtype])
 	}
 
+	zd.udpCounter.Add(1)
 	in, _, err := zd.udpClient.Exchange(m, zd.resolver)
 	if err != nil {
 		return nil, fmt.Errorf("error looking up %s for '%s' over UDP: %w", dns.TypeToString[rtype], name, err)
@@ -265,6 +312,7 @@ func retryingLookup(zd *zoneData, name string, rtype uint16, logger *slog.Logger
 	// Retry over TCP if the response was truncated
 	if in.Truncated {
 		logger.Info("UDP query was truncated, retrying over TCP", "name", name, "rtype", dns.TypeToString[rtype])
+		zd.tcpCounter.Add(1)
 		in, _, err = zd.tcpClient.Exchange(m, zd.resolver)
 		if err != nil {
 			return nil, fmt.Errorf("error looking up %s for '%s' over TCP: %w", dns.TypeToString[rtype], name, err)
@@ -366,13 +414,13 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	return nil
 }
 
-func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (*zoneData, error) {
+func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (stats, error) {
 	zoneCh := make(chan string)
 
 	zoneName = dns.Fqdn(zoneName)
 
 	if burstlimit < 1 {
-		return nil, fmt.Errorf("run: invalid burst limit: %d", burstlimit)
+		return stats{}, fmt.Errorf("run: invalid burst limit: %d", burstlimit)
 	}
 
 	if ratelimit == 0 {
@@ -381,6 +429,7 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 	}
 
 	zd := &zoneData{
+		zoneName:     zoneName,
 		zones:        map[string]struct{}{},
 		limiter:      rate.NewLimiter(ratelimit, burstlimit),
 		resolver:     resolver,
@@ -412,13 +461,13 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 
 		err := parseTransfer(axfrServer, zoneName, zd)
 		if err != nil {
-			return nil, fmt.Errorf("parseTransfer failed: %w", err)
+			return stats{}, fmt.Errorf("parseTransfer failed: %w", err)
 		}
 	} else {
 		fmt.Printf("reading zone '%s' from file %s\n", zoneName, zoneFile)
 		err := parseZonefile(zoneName, zoneFile, zd)
 		if err != nil {
-			return nil, fmt.Errorf("parseZonefile failed: %w", err)
+			return stats{}, fmt.Errorf("parseZonefile failed: %w", err)
 		}
 	}
 
@@ -443,16 +492,9 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 	close(zoneCh)
 	wg.Wait()
 
-	zd.wwwPercent = (float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100
-	zd.nsPercent = (float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100
-	zd.mxPercent = (float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100
+	s := zdToStats(zd)
 
-	for rcode := range zd.rcodeCounter {
-		zd.sortedRcodes = append(zd.sortedRcodes, rcode)
-	}
-	sort.Ints(zd.sortedRcodes)
-
-	return zd, nil
+	return s, nil
 }
 
 func main() {
@@ -493,22 +535,17 @@ func main() {
 
 	ratelimit := rate.Limit(*ratelimitFlag)
 
-	zd, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, logger)
+	stats, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, logger)
 	if err != nil {
 		logger.Error("run failed", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("At %s the .se zone (serial: %d) contains %d zones\n", time.Now().Format(time.RFC3339), zd.zoneSerial, len(zd.zones))
-	if *zoneLimitFlag > 0 {
-		fmt.Printf("lookups limited to %d zones\n", *zoneLimitFlag)
+	b, err := json.MarshalIndent(stats, "", "  ")
+	if err != nil {
+		logger.Error("json encoding of stats failed", "error", err)
+		os.Exit(1)
 	}
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on www\n", zd.wwwCounter.Load(), zd.zoneCounter, zd.wwwPercent)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more NS\n", zd.nsCounter.Load(), zd.zoneCounter, zd.nsPercent)
-	fmt.Printf("%d of %d (%.2f%%) have IPv6 on one or more MX\n", zd.mxCounter.Load(), zd.zoneCounter, zd.mxPercent)
-	fmt.Println("RCODE summary:")
-	for _, rcode := range zd.sortedRcodes {
-		fmt.Printf("  %s: %d\n", dns.RcodeToString[rcode], zd.rcodeCounter[rcode])
-	}
-	fmt.Printf("Query timeouts: %d\n", zd.timeoutCounter.Load())
+
+	fmt.Println(string(b))
 }
