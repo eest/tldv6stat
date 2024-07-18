@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -263,20 +264,32 @@ func TestRun(t *testing.T) {
 
 	timeout, err := time.ParseDuration("0s")
 	if err != nil {
-		t.Error("unable to parse duration")
+		t.Fatal("unable to parse duration")
 	}
 
 	// Single worker to make sure we use cached responses
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, 10, 1, logger)
+	s1, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, 10, 1, logger)
 	if err != nil {
-		logger.Error("run with single worker failed", "error", err)
-		os.Exit(1)
+		t.Fatalf("run with single worker failed: %s", err)
 	}
 
-	// Multiple worker to test concurrency
-	_, err = run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, 10, 1, logger)
+	j1, err := statsToJson(s1)
 	if err != nil {
-		logger.Error("run with multiple workers failed", "error", err)
-		os.Exit(1)
+		t.Fatalf("statsToJson with single worker failed: %s", err)
 	}
+
+	fmt.Println(string(j1))
+
+	// Multiple worker to test concurrency
+	s2, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, 10, 1, logger)
+	if err != nil {
+		t.Fatalf("run with multiple workers failed: %s", err)
+	}
+
+	j2, err := statsToJson(s2)
+	if err != nil {
+		t.Fatalf("statsToJson with multiple workers failed: %s", err)
+	}
+
+	fmt.Println(string(j2))
 }

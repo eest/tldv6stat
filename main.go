@@ -497,6 +497,15 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 	return s, nil
 }
 
+func statsToJson(s stats) ([]byte, error) {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("statsToJson: encoding failed: %w", err)
+	}
+
+	return b, nil
+}
+
 func main() {
 
 	var zoneNameFlag = flag.String("zone", "se", "zone to investigate")
@@ -535,17 +544,17 @@ func main() {
 
 	ratelimit := rate.Limit(*ratelimitFlag)
 
-	stats, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, logger)
+	s, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, logger)
 	if err != nil {
 		logger.Error("run failed", "error", err)
 		os.Exit(1)
 	}
 
-	b, err := json.MarshalIndent(stats, "", "  ")
+	j, err := statsToJson(s)
 	if err != nil {
-		logger.Error("json encoding of stats failed", "error", err)
+		logger.Error("json encoding failed", "error", err)
 		os.Exit(1)
 	}
 
-	fmt.Println(string(b))
+	fmt.Println(string(j))
 }
