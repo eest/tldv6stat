@@ -1,4 +1,4 @@
-module v6checker
+module github.com/eest/tldv6stat
 
 go 1.22.1
 
