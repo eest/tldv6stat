@@ -345,7 +345,7 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 	}
 
 	if in.Rcode != dns.RcodeSuccess {
-		logger.Info("query resulted in unsuccessful rcode", "name", name, "rcode", dns.RcodeToString[in.Rcode])
+		logger.Info("unsuccessful query rcode", "name", name, "rcode", dns.RcodeToString[in.Rcode])
 	}
 
 	zd.rcodeCounterMutex.Lock()
