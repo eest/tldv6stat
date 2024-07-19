@@ -113,7 +113,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 		var zoneWg sync.WaitGroup
 
-		logger.Info("handling zone", "zone", zone)
+		logger.Info("inspecting zone", "zone", zone)
 
 		for _, queryType := range queryTypes {
 			zoneWg.Add(1)
@@ -343,7 +343,7 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 	}
 
 	if in.Rcode != dns.RcodeSuccess {
-		logger.Info("query resulted in unsuccessful RCODE", "name", name, "rcode", dns.RcodeToString[in.Rcode])
+		logger.Info("query resulted in unsuccessful rcode", "name", name, "rcode", dns.RcodeToString[in.Rcode])
 	}
 
 	zd.rcodeCounterMutex.Lock()
@@ -488,7 +488,7 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 			return stats{}, fmt.Errorf("parseTransfer failed: %w", err)
 		}
 	} else {
-		fmt.Printf("reading zone '%s' from file %s\n", zoneName, zoneFile)
+		logger.Info("reading zone", "zone", zoneName, "zone_file", zoneFile)
 		err := parseZonefile(zoneName, zoneFile, zd)
 		if err != nil {
 			return stats{}, fmt.Errorf("parseZonefile failed: %w", err)
@@ -502,6 +502,7 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 		go queryWorker(i, zoneCh, &wg, zd, logger)
 	}
 
+	logger.Info("starting zone queries", "zone", zoneName)
 	for zone := range zd.zones {
 		if zoneLimit == 0 {
 			break
