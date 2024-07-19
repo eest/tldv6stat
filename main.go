@@ -113,7 +113,9 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 		var zoneWg sync.WaitGroup
 
-		logger.Info("inspecting zone", "zone", zone)
+		if zd.verbose {
+			logger.Info("inspecting zone", "zone", zone)
+		}
 
 		for _, queryType := range queryTypes {
 			zoneWg.Add(1)
