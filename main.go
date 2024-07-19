@@ -19,6 +19,7 @@ import (
 )
 
 type zoneData struct {
+	startTime         time.Time
 	udpClient         *dns.Client
 	tcpClient         *dns.Client
 	zones             map[string]struct{}
@@ -54,6 +55,7 @@ type stats struct {
 	RCodes        map[string]uint64 `json:"rcodes"`
 	NumChildZones uint64            `json:"num_child_zones"`
 	QueryTimeouts uint64            `json:"query_timeouts"`
+	RunTime       stringDuration    `json:"runtime"`
 }
 
 // Float suitable for the JSON statistics
@@ -61,6 +63,15 @@ type roundedFloat float64
 
 func (r roundedFloat) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.FormatFloat(float64(r), 'f', 2, 64)), nil
+}
+
+// JSON printable duration
+type stringDuration struct {
+	time.Duration
+}
+
+func (s stringDuration) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf(`"%s"`, s.Round(time.Millisecond).String())), nil
 }
 
 func zdToStats(zd *zoneData) stats {
@@ -78,6 +89,8 @@ func zdToStats(zd *zoneData) stats {
 		NumChildZones: zd.zoneCounter,
 		QueryTimeouts: zd.timeoutCounter.Load(),
 	}
+
+	s.RunTime.Duration = time.Since(zd.startTime)
 
 	rcodes := map[string]uint64{}
 	for rcode, counter := range zd.rcodeCounter {
@@ -439,6 +452,7 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 	}
 
 	zd := &zoneData{
+		startTime:    time.Now(),
 		zoneName:     zoneName,
 		zones:        map[string]struct{}{},
 		limiter:      rate.NewLimiter(ratelimit, burstlimit),
