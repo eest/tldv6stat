@@ -545,8 +545,8 @@ func main() {
 	var dialTimeoutFlag = flag.String("dial-timeout", "10s", "DNS client dial timeout, 0 means using the miekg/dns default")
 	var readTimeoutFlag = flag.String("read-timeout", "10s", "DNS client read timeout, 0 means using the miekg/dns default")
 	var writeTimeoutFlag = flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
-	var ratelimitFlag = flag.Float64("ratelimit-rate", 10, "DNS requests allowed per second, 0 means no limit")
-	var burstlimitFlag = flag.Int("ratelimit-burst", 1, "DNS request burst limit, must be at least 1")
+	var ratelimitFlag = flag.Float64("ratelimit", 10, "DNS requests allowed per second, 0 means no limit")
+	var burstlimitFlag = flag.Int("burstlimit", 1, "DNS request burst limit, must be at least 1")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
