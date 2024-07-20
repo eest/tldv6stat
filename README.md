@@ -33,22 +33,21 @@ $ tldv6stat -file se.zone
 ```
 
 ## Supported flags
-See `-help` for what flags are supported:
 ```
 $ tldv6stat -help
-Usage of ./tldv6stat:
+Usage of tldv6stat:
   -axfr-server string
     	server to transfer zone from (default "zonedata.iis.se:53")
+  -burstlimit int
+    	DNS request burst limit, must be at least 1 (default 1)
   -dial-timeout string
-    	DNS client dial timeout, 0 means using the miekg/dns default (default "0s")
+    	DNS client dial timeout, 0 means using the miekg/dns default (default "10s")
   -file string
     	zone file to parse
-  -ratelimit-burst int
-    	DNS request burst limit, must be at least 1 (default 1)
-  -ratelimit-rate float
+  -ratelimit float
     	DNS requests allowed per second, 0 means no limit (default 10)
   -read-timeout string
-    	DNS client read timeout, 0 means using the miekg/dns default (default "0s")
+    	DNS client read timeout, 0 means using the miekg/dns default (default "10s")
   -resolver string
     	resolver to query (default "8.8.8.8:53")
   -verbose
