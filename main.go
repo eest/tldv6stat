@@ -284,7 +284,6 @@ func isOnlyV6(zd *zoneData, name string, logger *slog.Logger) (bool, error) {
 }
 
 func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (bool, error) {
-
 	logger = logger.With("query_type", dns.TypeToString[queryType])
 
 	msg, err := dnsQuery(zd, name, queryType, logger)
@@ -391,7 +390,6 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 }
 
 func parseTransfer(axfrServer string, transferZone string, zd *zoneData) error {
-
 	t := new(dns.Transfer)
 	m := new(dns.Msg)
 	m.SetAxfr(transferZone)
@@ -569,7 +567,6 @@ func statsToJson(s stats) ([]byte, error) {
 }
 
 func main() {
-
 	var zoneNameFlag = flag.String("zone", "se", "zone to investigate")
 	var axfrServerFlag = flag.String("axfr-server", "zonedata.iis.se:53", "server to transfer zone from")
 	var resolverFlag = flag.String("resolver", "8.8.8.8:53", "resolver to query")
