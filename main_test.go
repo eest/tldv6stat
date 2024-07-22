@@ -108,7 +108,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				if err != nil {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
-			case "www.timeout.test.":
+			case "www.timeout.test.", "www.onlyv6-a-timeout.test.":
 				// Do not respond
 				return
 			default:
@@ -117,7 +117,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeAAAA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -150,7 +150,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeMX:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -189,7 +189,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeNS:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
