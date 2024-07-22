@@ -249,7 +249,7 @@ func cachedAaaaQuery(zd *zoneData, name string, logger *slog.Logger) (bool, erro
 		return false, nil
 	}
 
-	if len(msg.Answer) != 0 {
+	if len(msg.Answer) > 0 {
 		if zd.verbose {
 			logger.Info("cached positive AAAA", "name", name)
 		}
