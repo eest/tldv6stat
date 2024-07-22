@@ -44,21 +44,21 @@ type zoneData struct {
 }
 
 type stats struct {
-	ZoneName      string            `json:"zone_name"`
-	ZoneSerial    uint32            `json:"zone_serial"`
-	WWWPercent    roundedFloat      `json:"www_percent"`
-	WWWNum        uint64            `json:"www_num"`
-	WWWOnlyV6Num  uint64            `json:"www_onlyv6_num"`
-	NSPercent     roundedFloat      `json:"ns_percent"`
-	NSNum         uint64            `json:"ns_num"`
-	MXPercent     roundedFloat      `json:"mx_percent"`
-	MXNum         uint64            `json:"mx_num"`
-	NumUDPQueries uint64            `json:"num_udp_queries"`
-	NumTCPQueries uint64            `json:"num_tcp_queries"`
-	RCodes        map[string]uint64 `json:"rcodes"`
-	NumChildZones uint64            `json:"num_child_zones"`
-	QueryTimeouts uint64            `json:"query_timeouts"`
-	RunTime       stringDuration    `json:"runtime"`
+	ZoneName          string            `json:"zone_name"`
+	ZoneSerial        uint32            `json:"zone_serial"`
+	WWWPercent        roundedFloat      `json:"www_percent"`
+	WWWNum            uint64            `json:"www_num"`
+	WWWOnlyV6Num      uint64            `json:"www_onlyv6_num"`
+	NSPercent         roundedFloat      `json:"ns_percent"`
+	NSNum             uint64            `json:"ns_num"`
+	MXPercent         roundedFloat      `json:"mx_percent"`
+	MXNum             uint64            `json:"mx_num"`
+	NumUDPQueries     uint64            `json:"num_udp_queries"`
+	NumTCPQueries     uint64            `json:"num_tcp_queries"`
+	RCodes            map[string]uint64 `json:"rcodes"`
+	NumDelegatedZones uint64            `json:"num_delegated_zones"`
+	QueryTimeouts     uint64            `json:"query_timeouts"`
+	RunTime           stringDuration    `json:"runtime"`
 }
 
 // Float suitable for the JSON statistics
@@ -79,19 +79,19 @@ func (s stringDuration) MarshalJSON() ([]byte, error) {
 
 func zdToStats(zd *zoneData) stats {
 	s := stats{
-		ZoneName:      zd.zoneName,
-		ZoneSerial:    zd.zoneSerial,
-		WWWPercent:    roundedFloat((float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100),
-		WWWNum:        zd.wwwCounter.Load(),
-		WWWOnlyV6Num:  zd.wwwOnlyV6Counter.Load(),
-		NSPercent:     roundedFloat((float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100),
-		NSNum:         zd.nsCounter.Load(),
-		MXPercent:     roundedFloat((float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100),
-		MXNum:         zd.mxCounter.Load(),
-		NumUDPQueries: zd.udpCounter.Load(),
-		NumTCPQueries: zd.tcpCounter.Load(),
-		NumChildZones: zd.zoneCounter,
-		QueryTimeouts: zd.timeoutCounter.Load(),
+		ZoneName:          zd.zoneName,
+		ZoneSerial:        zd.zoneSerial,
+		WWWPercent:        roundedFloat((float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100),
+		WWWNum:            zd.wwwCounter.Load(),
+		WWWOnlyV6Num:      zd.wwwOnlyV6Counter.Load(),
+		NSPercent:         roundedFloat((float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100),
+		NSNum:             zd.nsCounter.Load(),
+		MXPercent:         roundedFloat((float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100),
+		MXNum:             zd.mxCounter.Load(),
+		NumUDPQueries:     zd.udpCounter.Load(),
+		NumTCPQueries:     zd.tcpCounter.Load(),
+		NumDelegatedZones: zd.zoneCounter,
+		QueryTimeouts:     zd.timeoutCounter.Load(),
 	}
 
 	s.RunTime.Duration = time.Since(zd.startTime)
@@ -115,6 +115,8 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 
 	for zone := range zoneCh {
 
+		logger := logger.With("delegated_zone", zone)
+
 		var zoneWg sync.WaitGroup
 
 		if zd.verbose {
@@ -131,10 +133,10 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 				v6, err := isV6(queryType, zd, zone, logger)
 				if err != nil {
 					if errors.Is(err, os.ErrDeadlineExceeded) {
-						logger.Error("isV6 query timed out", "zone", zone)
+						logger.Error("isV6 query timed out")
 						zd.timeoutCounter.Add(1)
 					} else {
-						logger.Error("isV6 failed", "error", err, "zone", zone)
+						logger.Error("isV6 failed", "error", err)
 						os.Exit(1)
 					}
 				}
@@ -150,10 +152,10 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 						wwwOnlyV6, err := isOnlyV6(zd, zone, logger)
 						if err != nil {
 							if errors.Is(err, os.ErrDeadlineExceeded) {
-								logger.Error("isOnlyV6 query timed out", "zone", zone)
+								logger.Error("isOnlyV6 query timed out")
 								zd.timeoutCounter.Add(1)
 							} else {
-								logger.Error("isOnlyV6 failed", "error", err, "zone", zone)
+								logger.Error("isOnlyV6 failed", "error", err)
 								os.Exit(1)
 							}
 						}
@@ -162,7 +164,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 							zd.wwwOnlyV6Counter.Add(1)
 						}
 					default:
-						logger.Error("unexpected querytype in isV6", "query_type", dns.TypeToString[queryType], "zone", zone)
+						logger.Error("unexpected querytype in isV6", "query_type", dns.TypeToString[queryType])
 						os.Exit(1)
 
 					}
