@@ -81,9 +81,43 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			ch <- &dns.Envelope{RR: zoneContent}
 			close(ch)
 			wg.Wait()
-		case dns.TypeAAAA:
+		case dns.TypeA:
 			switch r.Question[0].Name {
 			case "www.ok.test.", "www.ok-2.test.":
+				// Also has A
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				ip4 := net.ParseIP("127.0.0.1")
+
+				a := new(dns.A)
+				a.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600}
+				a.A = ip4
+
+				m.Answer = append(m.Answer, a)
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+				return
+			case "www.onlyv6.test.", "www.onlyv6-2.test.":
+				// No A record present, respond with empty NOERROR
+				m := new(dns.Msg)
+				m.SetReply(r)
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+			case "www.timeout.test.":
+				// Do not respond
+				return
+			default:
+				sendRefused(t, w, r)
+				return
+			}
+		case dns.TypeAAAA:
+			switch r.Question[0].Name {
+			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -116,7 +150,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeMX:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -155,7 +189,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeNS:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 

@@ -12,4 +12,7 @@ www.onlyv4.test.	86400	IN	A	127.0.0.1
 onlyv4-2.test.		86400	IN	NS	www.onlyv4.test.
 timeout.test.		86400	IN	NS	timeout.test.
 timeout.test.		86400	IN	AAAA	::1
+onlyv6.test.		86400	IN	NS	www.ok.test.
+www.onlyv6.test.	86400	IN	AAAA	::1
+onlyv6-2.test.		86400	IN	NS	www.ok.test.
 test.			172800	IN	SOA	mname.test. mbox.test. 2024071007 1800 1800 864000 7200

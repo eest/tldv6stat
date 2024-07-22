@@ -24,6 +24,7 @@ type zoneData struct {
 	tcpClient         *dns.Client
 	zones             map[string]struct{}
 	wwwCounter        atomic.Uint64
+	wwwOnlyV6Counter  atomic.Uint64
 	nsCounter         atomic.Uint64
 	mxCounter         atomic.Uint64
 	udpCounter        atomic.Uint64
@@ -46,6 +47,7 @@ type stats struct {
 	ZoneSerial    uint32            `json:"zone_serial"`
 	WWWPercent    roundedFloat      `json:"www_percent"`
 	WWWNum        uint64            `json:"www_num"`
+	WWWOnlyV6Num  uint64            `json:"www_onlyv6_num"`
 	NSPercent     roundedFloat      `json:"ns_percent"`
 	NSNum         uint64            `json:"ns_num"`
 	MXPercent     roundedFloat      `json:"mx_percent"`
@@ -80,6 +82,7 @@ func zdToStats(zd *zoneData) stats {
 		ZoneSerial:    zd.zoneSerial,
 		WWWPercent:    roundedFloat((float64(zd.wwwCounter.Load()) / float64(zd.zoneCounter)) * 100),
 		WWWNum:        zd.wwwCounter.Load(),
+		WWWOnlyV6Num:  zd.wwwOnlyV6Counter.Load(),
 		NSPercent:     roundedFloat((float64(zd.nsCounter.Load()) / float64(zd.zoneCounter)) * 100),
 		NSNum:         zd.nsCounter.Load(),
 		MXPercent:     roundedFloat((float64(zd.mxCounter.Load()) / float64(zd.zoneCounter)) * 100),
@@ -143,6 +146,20 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 						zd.nsCounter.Add(1)
 					case dns.TypeAAAA:
 						zd.wwwCounter.Add(1)
+						wwwOnlyV6, err := isOnlyV6(zd, zone, logger)
+						if err != nil {
+							if errors.Is(err, os.ErrDeadlineExceeded) {
+								logger.Error("isOnlyV6 query timed out", "zone", zone)
+								zd.timeoutCounter.Add(1)
+							} else {
+								logger.Error("isOnlyV6 failed", "error", err, "zone", zone)
+								os.Exit(1)
+							}
+						}
+
+						if wwwOnlyV6 {
+							zd.wwwOnlyV6Counter.Add(1)
+						}
 					default:
 						logger.Error("unexpected querytype in isV6", "query_type", dns.TypeToString[queryType], "zone", zone)
 						os.Exit(1)
@@ -248,13 +265,31 @@ func cachedAaaaQuery(zd *zoneData, name string, logger *slog.Logger) (bool, erro
 	return false, nil
 }
 
+func isOnlyV6(zd *zoneData, name string, logger *slog.Logger) (bool, error) {
+	logger = logger.With("query_type", dns.TypeToString[dns.TypeA])
+
+	msg, err := dnsQuery(zd, name, dns.TypeA, logger)
+	if err != nil {
+		return false, fmt.Errorf("isOnlyV6: dnsQuery failed for name: %w", err)
+	}
+
+	// If we received non-successful response dont bother with looking at answer section.
+	if msg.Rcode != dns.RcodeSuccess {
+		return false, nil
+	}
+
+	// If we receieved an NOERROR response with an empty answer section
+	// there is no A for this name
+	return len(msg.Answer) == 0, nil
+}
+
 func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (bool, error) {
 
 	logger = logger.With("query_type", dns.TypeToString[queryType])
 
 	msg, err := dnsQuery(zd, name, queryType, logger)
 	if err != nil {
-		return false, fmt.Errorf("isMxV6: dnsQuery failed for name: %w", err)
+		return false, fmt.Errorf("isV6: dnsQuery failed for name: %w", err)
 	}
 
 	// If we received non-successful response dont bother with looking at answer section.
