@@ -63,7 +63,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				zoneContent = append(zoneContent, rr)
 			}
 			if zp.Err() != nil {
-				t.Errorf("unable to parse zone file: %s", err)
+				t.Errorf("unable to parse zone file: %s", zp.Err())
 				return
 			}
 

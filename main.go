@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -249,7 +250,7 @@ func cachedAaaaQuery(zd *zoneData, name string, logger *slog.Logger) (bool, erro
 		return false, nil
 	}
 
-	if len(msg.Answer) > 0 {
+	if validAaaaAnswer(msg, logger) {
 		if zd.verbose {
 			logger.Info("cached positive AAAA", "name", name)
 		}
@@ -278,9 +279,9 @@ func isOnlyV6(zd *zoneData, name string, logger *slog.Logger) (bool, error) {
 		return false, nil
 	}
 
-	// If we receieved an NOERROR response with an empty answer section
-	// there is no A for this name
-	return len(msg.Answer) == 0, nil
+	// If the answer section is not valid (empty or malformed rdata) this
+	// is a v6-only name
+	return !validAAnswer(msg, logger), nil
 }
 
 func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (bool, error) {
@@ -298,7 +299,10 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 
 	// If we are are looking up AAAA there is nothing more to do
 	if queryType == dns.TypeAAAA {
-		return len(msg.Answer) > 0, nil
+		if validAaaaAnswer(msg, logger) {
+			return true, nil
+		}
+		return false, nil
 	}
 
 	// ... for other types we need to do further lookups for AAAA
@@ -470,6 +474,72 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	}
 
 	return nil
+}
+
+func validAAnswer(msg *dns.Msg, logger *slog.Logger) bool {
+	if len(msg.Answer) == 0 {
+		return false
+	}
+
+	for _, record := range msg.Answer {
+		if a, ok := record.(*dns.A); ok {
+			ip4, ok := netip.AddrFromSlice(a.A)
+			if !ok {
+				logger.Error("validAAnswer: netip.AddrFromSlice is not ok")
+				return false
+			}
+
+			if !ip4.Is4() {
+				logger.Error("validAAnswer: address in rdata is not v4")
+				return false
+			}
+
+		} else {
+			typeString, ok := dns.TypeToString[record.Header().Rrtype]
+			if ok {
+				logger.Error("validAAnswer: record in A answer section is unexpected type", "actual_rtype", typeString)
+			} else {
+				logger.Error("validAAnswer record in A answer section is unknown type", "actual_rtype_int", record.Header().Rrtype)
+			}
+			return false
+		}
+	}
+
+	// If we got this far all records in the answer section should be valid IPv4
+	return true
+}
+
+func validAaaaAnswer(msg *dns.Msg, logger *slog.Logger) bool {
+	if len(msg.Answer) == 0 {
+		return false
+	}
+
+	for _, record := range msg.Answer {
+		if aaaa, ok := record.(*dns.AAAA); ok {
+			ip6, ok := netip.AddrFromSlice(aaaa.AAAA)
+			if !ok {
+				logger.Error("validAaaaAnswer: netip.AddrFromSlice is not ok")
+				return false
+			}
+
+			if !ip6.Is6() {
+				logger.Error("validAaaaAnswer: address in rdata is not v6")
+				return false
+			}
+
+		} else {
+			typeString, ok := dns.TypeToString[record.Header().Rrtype]
+			if ok {
+				logger.Error("validAaaaAnswer: record in AAAA answer section is unexpected type", "actual_rtype", typeString)
+			} else {
+				logger.Error("validAaaaAnswer: record in AAAA answer section is unknown type", "actual_rtype_int", record.Header().Rrtype)
+			}
+			return false
+		}
+	}
+
+	// If we got this far all records in the answer section should be valid IPv6 valid
+	return true
 }
 
 func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (stats, error) {
