@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -484,18 +483,8 @@ func validAAnswer(msg *dns.Msg, logger *slog.Logger) bool {
 	}
 
 	for _, record := range msg.Answer {
-		if a, ok := record.(*dns.A); ok {
-			ip4, ok := netip.AddrFromSlice(a.A)
-			if !ok {
-				logger.Error("validAAnswer: netip.AddrFromSlice is not ok")
-				return false
-			}
-
-			if !ip4.Is4() {
-				logger.Error("validAAnswer: address in rdata is not v4")
-				return false
-			}
-
+		if _, ok := record.(*dns.A); ok {
+			return true
 		} else {
 			typeString, ok := dns.TypeToString[record.Header().Rrtype]
 			if ok {
@@ -503,12 +492,13 @@ func validAAnswer(msg *dns.Msg, logger *slog.Logger) bool {
 			} else {
 				logger.Error("validAAnswer record in A answer section is unknown type", "actual_rtype_int", record.Header().Rrtype)
 			}
-			return false
+			continue
 		}
 	}
 
-	// If we got this far all records in the answer section should be valid IPv4
-	return true
+	// If we got this far we did not find at least one valid A record in
+	// the answer section
+	return false
 }
 
 func validAaaaAnswer(msg *dns.Msg, logger *slog.Logger) bool {
@@ -517,18 +507,8 @@ func validAaaaAnswer(msg *dns.Msg, logger *slog.Logger) bool {
 	}
 
 	for _, record := range msg.Answer {
-		if aaaa, ok := record.(*dns.AAAA); ok {
-			ip6, ok := netip.AddrFromSlice(aaaa.AAAA)
-			if !ok {
-				logger.Error("validAaaaAnswer: netip.AddrFromSlice is not ok")
-				return false
-			}
-
-			if !ip6.Is6() {
-				logger.Error("validAaaaAnswer: address in rdata is not v6")
-				return false
-			}
-
+		if _, ok := record.(*dns.AAAA); ok {
+			return true
 		} else {
 			typeString, ok := dns.TypeToString[record.Header().Rrtype]
 			if ok {
@@ -536,12 +516,13 @@ func validAaaaAnswer(msg *dns.Msg, logger *slog.Logger) bool {
 			} else {
 				logger.Error("validAaaaAnswer: record in AAAA answer section is unknown type", "actual_rtype_int", record.Header().Rrtype)
 			}
-			return false
+			continue
 		}
 	}
 
-	// If we got this far all records in the answer section should be valid IPv6 valid
-	return true
+	// If we got this far we did not find at least one valid AAAA record in
+	// the answer section
+	return false
 }
 
 func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (stats, error) {
