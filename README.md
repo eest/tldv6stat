@@ -65,9 +65,9 @@ Usage of tldv6stat:
 ## Development
 When working on this code the following tools are expected to be used before
 committing:
-* `go fmt ./...`
-* `go vet ./...`
+* `go fmt`
+* `go vet`
 * `staticcheck ./...` (see [staticcheck](https://staticcheck.io))
 * `gosec ./...` (see [gosec](https://github.com/securego/gosec))
 * `golangci-lint run` (see [golangci-lint](https://golangci-lint.run))
-* `go test -race ./...`
+* `go test -race`
