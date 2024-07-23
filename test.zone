@@ -17,4 +17,5 @@ www.onlyv6.test.	86400	IN	AAAA	::1
 onlyv6-2.test.		86400	IN	NS	www.ok.test.
 onlyv6-a-timeout.test.	86400	IN	NS	www.ok.test.
 invalid-a-in-aaaa.test.	86400	IN	NS	www.ok.test.
+invalid-aaaa-in-a.test.	86400	IN	NS	www.ok.test.
 test.			172800	IN	SOA	mname.test. mbox.test. 2024071007 1800 1800 864000 7200
