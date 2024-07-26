@@ -83,7 +83,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			wg.Wait()
 		case dns.TypeA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.invalid-a-in-aaaa.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.invalid-a-in-aaaa.test.", "www.invalid-mx-cname.test.":
 				// Also has A
 				m := new(dns.Msg)
 				m.SetReply(r)
@@ -134,7 +134,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeAAAA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.", "www.invalid-aaaa-in-a.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.", "www.invalid-aaaa-in-a.test.", "www.invalid-mx-cname.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -178,6 +178,29 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
 				return
+			case "cname.test.":
+				// Response with CNAME followed by AAAA record in answer section, invalid if present in NS or MX rdata.
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				cnameTarget := "mx.cname.test."
+
+				cname := new(dns.CNAME)
+				cname.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 3600}
+				cname.Target = cnameTarget
+				m.Answer = append(m.Answer, cname)
+
+				ip6 := net.ParseIP("::1")
+				aaaa := new(dns.AAAA)
+				aaaa.Hdr = dns.RR_Header{Name: cnameTarget, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
+				aaaa.AAAA = ip6
+
+				m.Answer = append(m.Answer, aaaa)
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+				return
 			default:
 				sendRefused(t, w, r)
 				return
@@ -214,6 +237,21 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				if err != nil {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
+			case "invalid-mx-cname.test.":
+				// Has MX, but rdata points to CNAME
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				mx := new(dns.MX)
+				mx.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+				mx.Preference = 10
+				mx.Mx = "cname.test."
+				m.Answer = append(m.Answer, mx)
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
 			case "timeout.test.":
 				// Do not respond
 				return
@@ -223,7 +261,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeNS:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-mx-cname.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
