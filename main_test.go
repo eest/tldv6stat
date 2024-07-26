@@ -128,6 +128,29 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			case "www.timeout.test.", "www.onlyv6-a-timeout.test.":
 				// Do not respond
 				return
+			case "www.cname-www.test.":
+				// Response with CNAME followed by AAAA record in answer section, valid because it is www lookup
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				cnameTarget := "www-target.cname.test."
+
+				cname := new(dns.CNAME)
+				cname.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 3600}
+				cname.Target = cnameTarget
+				m.Answer = append(m.Answer, cname)
+
+				ip4 := net.ParseIP("127.0.0.1")
+				a := new(dns.A)
+				a.Hdr = dns.RR_Header{Name: cnameTarget, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600}
+				a.A = ip4
+
+				m.Answer = append(m.Answer, a)
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+				return
 			default:
 				sendRefused(t, w, r)
 				return
@@ -224,13 +247,36 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
 				return
+			case "www.cname-www.test.":
+				// Response with CNAME followed by AAAA record in answer section, valid because it is www lookup
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				cnameTarget := "www-target.cname.test."
+
+				cname := new(dns.CNAME)
+				cname.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 3600}
+				cname.Target = cnameTarget
+				m.Answer = append(m.Answer, cname)
+
+				ip6 := net.ParseIP("::1")
+				aaaa := new(dns.AAAA)
+				aaaa.Hdr = dns.RR_Header{Name: cnameTarget, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
+				aaaa.AAAA = ip6
+
+				m.Answer = append(m.Answer, aaaa)
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+				return
 			default:
 				sendRefused(t, w, r)
 				return
 			}
 		case dns.TypeMX:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-ns-cname.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-ns-cname.test.", "cname-www.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -284,7 +330,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeNS:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-mx-cname.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-mx-cname.test.", "cname-www.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 

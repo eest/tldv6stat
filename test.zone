@@ -21,4 +21,5 @@ invalid-aaaa-in-a.test.	86400	IN	NS	www.ok.test.
 invalid-mx-cname.test.	86400	IN	NS	www.ok.test.
 invalid-ns-cname.test.	86400	IN	NS	ns.cname.test.
 ns.cname.test.	        86400	IN	AAAA	::1 ; just make named-checkzone happy, test server returns CNAME
+cname-www.test.	        86400	IN	NS	www.ok.test.
 test.			172800	IN	SOA	mname.test. mbox.test. 2024071007 1800 1800 864000 7200
