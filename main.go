@@ -148,7 +148,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 						zd.nsCounter.Add(1)
 					case dns.TypeAAAA:
 						zd.wwwCounter.Add(1)
-						wwwOnlyV6, err := isOnlyV6(zd, zone, logger)
+						wwwOnlyV6, err := isOnlyV6(queryType, zd, zone, logger)
 						if err != nil {
 							if errors.Is(err, os.ErrDeadlineExceeded) {
 								logger.Error("isOnlyV6 query timed out")
@@ -175,7 +175,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 	}
 }
 
-func cachedAaaaQuery(zd *zoneData, name string, logger *slog.Logger) (bool, error) {
+func cachedAaaaQuery(zd *zoneData, name string, origQueryType uint16, logger *slog.Logger) (bool, error) {
 	if v, ok := zd.aaaaCache.Load(name); ok {
 		b := v.(bool)
 		if b {
@@ -251,7 +251,7 @@ func cachedAaaaQuery(zd *zoneData, name string, logger *slog.Logger) (bool, erro
 		return false, nil
 	}
 
-	if validAaaaAnswer(msg, logger) {
+	if validAnswer(msg, dns.TypeAAAA, origQueryType, logger) {
 		if zd.verbose {
 			logger.Info("cached positive AAAA", "name", name)
 		}
@@ -267,7 +267,7 @@ func cachedAaaaQuery(zd *zoneData, name string, logger *slog.Logger) (bool, erro
 	return false, nil
 }
 
-func isOnlyV6(zd *zoneData, name string, logger *slog.Logger) (bool, error) {
+func isOnlyV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (bool, error) {
 	logger = logger.With("query_type", dns.TypeToString[dns.TypeA])
 
 	msg, err := dnsQuery(zd, name, dns.TypeA, logger)
@@ -282,7 +282,7 @@ func isOnlyV6(zd *zoneData, name string, logger *slog.Logger) (bool, error) {
 
 	// If the answer section is not valid (empty or malformed rdata) this
 	// is a v6-only name
-	return !validAAnswer(msg, logger), nil
+	return !validAnswer(msg, dns.TypeA, queryType, logger), nil
 }
 
 func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (bool, error) {
@@ -300,7 +300,7 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 
 	// If we are are looking up AAAA there is nothing more to do
 	if queryType == dns.TypeAAAA {
-		if validAaaaAnswer(msg, logger) {
+		if validAnswer(msg, queryType, queryType, logger) {
 			return true, nil
 		}
 		return false, nil
@@ -321,7 +321,7 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 					logger.Info("a domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "name", name)
 					continue
 				}
-				found, err := cachedAaaaQuery(zd, t.Mx, logger)
+				found, err := cachedAaaaQuery(zd, t.Mx, queryType, logger)
 				if err != nil {
 					return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for MX name %s: %w", t.Mx, err)
 				}
@@ -335,7 +335,7 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 			}
 		case dns.TypeNS:
 			if t, ok := rr.(*dns.NS); ok {
-				found, err := cachedAaaaQuery(zd, t.Ns, logger)
+				found, err := cachedAaaaQuery(zd, t.Ns, queryType, logger)
 				if err != nil {
 					return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for NS name %s: %w", t.Ns, err)
 				}
@@ -477,50 +477,40 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	return nil
 }
 
-func validAAnswer(msg *dns.Msg, logger *slog.Logger) bool {
+func validAnswer(msg *dns.Msg, queryType uint16, origQueryType uint16, logger *slog.Logger) bool {
 	if len(msg.Answer) == 0 {
 		return false
 	}
 
 	for _, record := range msg.Answer {
-		if _, ok := record.(*dns.A); ok {
-			return true
-		} else {
+		switch record.(type) {
+		case *dns.CNAME:
+			switch origQueryType {
+			case dns.TypeNS, dns.TypeMX:
+				// https://datatracker.ietf.org/doc/html/rfc2181#section-10.3
+				// MX or NS rdata is not allowed to point to CNAME
+				logger.Error("validAnswer: record in response is invalid CNAME", "sub_query_type", dns.TypeToString[queryType])
+				return false
+			}
+		case *dns.A:
+			if queryType == dns.TypeA {
+				return true
+			}
+		case *dns.AAAA:
+			if queryType == dns.TypeAAAA {
+				return true
+			}
+		default:
 			typeString, ok := dns.TypeToString[record.Header().Rrtype]
 			if ok {
-				logger.Error("validAAnswer: record in A answer section is unexpected type", "actual_rtype", typeString)
+				logger.Error("validAnswer: record in answer section is unexpected type", "sub_query_type", dns.TypeToString[queryType], "actual_rtype", typeString)
 			} else {
-				logger.Error("validAAnswer record in A answer section is unknown type", "actual_rtype_int", record.Header().Rrtype)
+				logger.Error("validAnswer: record in  answer section is unknown type", "sub_query_type", dns.TypeToString[queryType], "actual_rtype_int", record.Header().Rrtype)
 			}
-			continue
 		}
 	}
 
-	// If we got this far we did not find at least one valid A record in
-	// the answer section
-	return false
-}
-
-func validAaaaAnswer(msg *dns.Msg, logger *slog.Logger) bool {
-	if len(msg.Answer) == 0 {
-		return false
-	}
-
-	for _, record := range msg.Answer {
-		if _, ok := record.(*dns.AAAA); ok {
-			return true
-		} else {
-			typeString, ok := dns.TypeToString[record.Header().Rrtype]
-			if ok {
-				logger.Error("validAaaaAnswer: record in AAAA answer section is unexpected type", "actual_rtype", typeString)
-			} else {
-				logger.Error("validAaaaAnswer: record in AAAA answer section is unknown type", "actual_rtype_int", record.Header().Rrtype)
-			}
-			continue
-		}
-	}
-
-	// If we got this far we did not find at least one valid AAAA record in
+	// If we got this far we did not find at least one valid record in
 	// the answer section
 	return false
 }
