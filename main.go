@@ -29,6 +29,7 @@ type zoneData struct {
 	mxCounter         atomic.Uint64
 	udpCounter        atomic.Uint64
 	tcpCounter        atomic.Uint64
+	additionalCounter atomic.Uint64
 	aaaaCache         sync.Map
 	limiter           *rate.Limiter
 	resolver          string
@@ -58,6 +59,7 @@ type stats struct {
 	NumDelegatedZones uint64            `json:"num_delegated_zones"`
 	QueryTimeouts     uint64            `json:"query_timeouts"`
 	RunTime           stringDuration    `json:"runtime"`
+	AdditionalFound   uint64            `json:"additional_found"`
 }
 
 // Float suitable for the JSON statistics
@@ -91,6 +93,7 @@ func zdToStats(zd *zoneData) stats {
 		NumTCPQueries:     zd.tcpCounter.Load(),
 		NumDelegatedZones: zd.zoneCounter,
 		QueryTimeouts:     zd.timeoutCounter.Load(),
+		AdditionalFound:   zd.additionalCounter.Load(),
 	}
 
 	s.RunTime.Duration = time.Since(zd.startTime)
@@ -248,6 +251,7 @@ func cachedAaaaQuery(zd *zoneData, name string, origQueryType uint16, origMsg *d
 					if zd.verbose {
 						logger.Info("cached positive AAAA based on additional section", "name", name)
 					}
+					zd.additionalCounter.Add(1)
 					zd.aaaaCache.Store(name, true)
 					return true, nil
 				}
