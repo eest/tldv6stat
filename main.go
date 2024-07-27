@@ -175,7 +175,7 @@ func queryWorker(id int, zoneCh chan string, wg *sync.WaitGroup, zd *zoneData, l
 	}
 }
 
-func cachedAaaaQuery(zd *zoneData, name string, origQueryType uint16, logger *slog.Logger) (bool, error) {
+func cachedAaaaQuery(zd *zoneData, name string, origQueryType uint16, origMsg *dns.Msg, logger *slog.Logger) (bool, error) {
 	if v, ok := zd.aaaaCache.Load(name); ok {
 		b := v.(bool)
 		if b {
@@ -236,6 +236,23 @@ func cachedAaaaQuery(zd *zoneData, name string, origQueryType uint16, logger *sl
 
 	if zd.verbose {
 		logger.Info("cachedAaaaQuery: got cache miss after aquiring lock", "name", name)
+	}
+
+	// First check if additional section already includes AAAA for the
+	// requested name
+	switch origQueryType {
+	case dns.TypeMX, dns.TypeNS:
+		for _, arr := range origMsg.Extra {
+			if t, ok := arr.(*dns.AAAA); ok {
+				if t.Hdr.Name == name {
+					if zd.verbose {
+						logger.Info("cached positive AAAA based on additional section", "name", name)
+					}
+					zd.aaaaCache.Store(name, true)
+					return true, nil
+				}
+			}
+		}
 	}
 
 	msg, err := dnsQuery(zd, name, dns.TypeAAAA, logger)
@@ -321,7 +338,7 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 					logger.Info("a domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "name", name)
 					continue
 				}
-				found, err := cachedAaaaQuery(zd, t.Mx, queryType, logger)
+				found, err := cachedAaaaQuery(zd, t.Mx, queryType, msg, logger)
 				if err != nil {
 					return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for MX name %s: %w", t.Mx, err)
 				}
@@ -335,7 +352,7 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 			}
 		case dns.TypeNS:
 			if t, ok := rr.(*dns.NS); ok {
-				found, err := cachedAaaaQuery(zd, t.Ns, queryType, logger)
+				found, err := cachedAaaaQuery(zd, t.Ns, queryType, msg, logger)
 				if err != nil {
 					return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for NS name %s: %w", t.Ns, err)
 				}

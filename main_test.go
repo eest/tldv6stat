@@ -83,7 +83,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			wg.Wait()
 		case dns.TypeA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.invalid-a-in-aaaa.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.invalid-a-in-aaaa.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.", "www.additional-aaaa.test.", "www.additional-aaaa-2.test.":
 				// Also has A
 				m := new(dns.Msg)
 				m.SetReply(r)
@@ -157,7 +157,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeAAAA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.", "www.invalid-aaaa-in-a.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.", "www.invalid-aaaa-in-a.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.", "www.additional-aaaa.test.", "www.additional-aaaa-2.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -324,6 +324,30 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			case "timeout.test.":
 				// Do not respond
 				return
+			case "additional-aaaa.test.", "additional-aaaa-2.test.":
+				// Has MX and additional section with AAAA for the name
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				mxName := "mx.additional-aaaa.test."
+
+				mx := new(dns.MX)
+				mx.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+				mx.Preference = 10
+				mx.Mx = mxName
+				m.Answer = append(m.Answer, mx)
+
+				ip6 := net.ParseIP("::1")
+				aaaa := new(dns.AAAA)
+				aaaa.Hdr = dns.RR_Header{Name: mxName, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
+				aaaa.AAAA = ip6
+
+				m.Extra = append(m.Extra, aaaa)
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
 			default:
 				sendRefused(t, w, r)
 				return
@@ -370,6 +394,29 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				ns.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 3600}
 				ns.Ns = "cname.test."
 				m.Answer = append(m.Answer, ns)
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+			case "additional-aaaa.test.", "additional-aaaa-2.test.":
+				// Has NS, and rdata name is contained in additional section
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				nsName := "ns.additional-aaaa.test."
+
+				ns := new(dns.NS)
+				ns.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 3600}
+				ns.Ns = nsName
+				m.Answer = append(m.Answer, ns)
+
+				ip6 := net.ParseIP("::1")
+				aaaa := new(dns.AAAA)
+				aaaa.Hdr = dns.RR_Header{Name: nsName, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 3600}
+				aaaa.AAAA = ip6
+
+				m.Extra = append(m.Extra, aaaa)
 
 				err := w.WriteMsg(m)
 				if err != nil {
