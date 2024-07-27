@@ -10,12 +10,12 @@ number of workers while ratelimiting outgoing DNS requests with (very)
 conservative defaults.
 
 ### Ratelimiting and worker count
-The DNS request ratelimit is controlled using the `-ratelimit-*` flags. You
-probably want to increase this (or set `-ratelimit-rate 0` to disable
-ratelimiting entirely) if your resolver can handle it. If increasing the
-ratelimit you probably want to set a custom resolver other than the default of
-`8.8.8.8:53` as well. The number of workers probably should be increased as
-well if operating on large zones.
+The DNS request ratelimit is controlled using the `-ratelimit` and
+`-burstlimit` flags. You probably want to increase this (or set `-ratelimit 0`
+to disable ratelimiting entirely) if your resolver can handle it. If
+increasing the ratelimit you probably want to set a custom resolver other than
+the default of `8.8.8.8:53` as well. The number of workers probably should be
+increased as well if operating on large zones.
 
 ### Output
 The tool will output JSON both for the collected statistics as well as any operational logging.
