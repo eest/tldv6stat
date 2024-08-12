@@ -44,6 +44,8 @@ Usage of tldv6stat:
     	DNS client dial timeout, 0 means using the miekg/dns default (default "10s")
   -file string
     	zone file to parse
+  -mx-suffixes string
+    	Comma-separated list of MX suffixes to count matches for, e.g. '.mx.example.com,.mail.example.net'
   -ratelimit float
     	DNS requests allowed per second, 0 means no limit (default 10)
   -read-timeout string
