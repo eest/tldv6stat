@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,28 +20,31 @@ import (
 )
 
 type zoneData struct {
-	startTime         time.Time
-	udpClient         *dns.Client
-	tcpClient         *dns.Client
-	zones             map[string]struct{}
-	wwwCounter        atomic.Uint64
-	wwwOnlyV6Counter  atomic.Uint64
-	nsCounter         atomic.Uint64
-	mxCounter         atomic.Uint64
-	udpCounter        atomic.Uint64
-	tcpCounter        atomic.Uint64
-	additionalCounter atomic.Uint64
-	aaaaCache         sync.Map
-	limiter           *rate.Limiter
-	resolver          string
-	rcodeCounterMutex sync.Mutex
-	rcodeCounter      map[int]uint64
-	timeoutCounter    atomic.Uint64
-	zoneSerial        uint32
-	verbose           bool
-	zoneCounter       uint64
-	zoneName          string
-	lookupLock        sync.Map
+	startTime            time.Time
+	udpClient            *dns.Client
+	tcpClient            *dns.Client
+	zones                map[string]struct{}
+	wwwCounter           atomic.Uint64
+	wwwOnlyV6Counter     atomic.Uint64
+	nsCounter            atomic.Uint64
+	mxCounter            atomic.Uint64
+	udpCounter           atomic.Uint64
+	tcpCounter           atomic.Uint64
+	additionalCounter    atomic.Uint64
+	aaaaCache            sync.Map
+	limiter              *rate.Limiter
+	resolver             string
+	rcodeCounterMutex    sync.Mutex
+	rcodeCounter         map[int]uint64
+	timeoutCounter       atomic.Uint64
+	zoneSerial           uint32
+	verbose              bool
+	zoneCounter          uint64
+	zoneName             string
+	lookupLock           sync.Map
+	mxSuffixes           []string
+	mxSuffixCounter      map[string]uint64
+	mxSuffixCounterMutex sync.Mutex
 }
 
 type stats struct {
@@ -60,6 +64,7 @@ type stats struct {
 	QueryTimeouts     uint64            `json:"query_timeouts"`
 	RunTime           stringDuration    `json:"runtime"`
 	AdditionalFound   uint64            `json:"additional_found"`
+	MXSuffixCounter   map[string]uint64 `json:"mx_suffix_counter"`
 }
 
 // Float suitable for the JSON statistics
@@ -94,6 +99,7 @@ func zdToStats(zd *zoneData) stats {
 		NumDelegatedZones: zd.zoneCounter,
 		QueryTimeouts:     zd.timeoutCounter.Load(),
 		AdditionalFound:   zd.additionalCounter.Load(),
+		MXSuffixCounter:   zd.mxSuffixCounter,
 	}
 
 	s.RunTime.Duration = time.Since(zd.startTime)
@@ -306,6 +312,16 @@ func isOnlyV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) 
 	return !validAnswer(msg, dns.TypeA, queryType, logger), nil
 }
 
+func matchSuffix(domain string, domainSuffixes []string) (bool, string) {
+	for _, suffix := range domainSuffixes {
+		if strings.HasSuffix(domain, suffix) {
+			return true, suffix
+		}
+	}
+
+	return false, ""
+}
+
 func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (bool, error) {
 	logger = logger.With("query_type", dns.TypeToString[queryType])
 
@@ -342,6 +358,17 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 					logger.Info("a domain that advertises a null MX MUST NOT advertise any other MX RR yet this one does", "name", name)
 					continue
 				}
+
+				if len(zd.mxSuffixes) > 0 {
+					match, suffix := matchSuffix(t.Mx, zd.mxSuffixes)
+					if match {
+						zd.mxSuffixCounterMutex.Lock()
+						zd.mxSuffixCounter[suffix]++
+						zd.mxSuffixCounterMutex.Unlock()
+
+					}
+				}
+
 				found, err := cachedAaaaQuery(zd, t.Mx, queryType, msg, logger)
 				if err != nil {
 					return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for MX name %s: %w", t.Mx, err)
@@ -536,7 +563,7 @@ func validAnswer(msg *dns.Msg, queryType uint16, origQueryType uint16, logger *s
 	return false
 }
 
-func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, logger *slog.Logger) (stats, error) {
+func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, mxSuffixes []string, logger *slog.Logger) (stats, error) {
 	zoneCh := make(chan string)
 
 	zoneName = dns.Fqdn(zoneName)
@@ -551,15 +578,17 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 	}
 
 	zd := &zoneData{
-		startTime:    time.Now(),
-		zoneName:     zoneName,
-		zones:        map[string]struct{}{},
-		limiter:      rate.NewLimiter(ratelimit, burstlimit),
-		resolver:     resolver,
-		udpClient:    &dns.Client{},
-		tcpClient:    &dns.Client{Net: "tcp"},
-		rcodeCounter: map[int]uint64{},
-		verbose:      verbose,
+		startTime:       time.Now(),
+		zoneName:        zoneName,
+		zones:           map[string]struct{}{},
+		limiter:         rate.NewLimiter(ratelimit, burstlimit),
+		resolver:        resolver,
+		udpClient:       &dns.Client{},
+		tcpClient:       &dns.Client{Net: "tcp"},
+		rcodeCounter:    map[int]uint64{},
+		verbose:         verbose,
+		mxSuffixes:      mxSuffixes,
+		mxSuffixCounter: map[string]uint64{},
 	}
 
 	if dialTimeout != 0 {
@@ -643,6 +672,7 @@ func main() {
 	var writeTimeoutFlag = flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
 	var ratelimitFlag = flag.Float64("ratelimit", 10, "DNS requests allowed per second, 0 means no limit")
 	var burstlimitFlag = flag.Int("burstlimit", 1, "DNS request burst limit, must be at least 1")
+	var mxSuffixesFlag = flag.String("mx-suffixes", "", "Comma-separated list of MX suffixes to count matches for, e.g. '.mx.example.com,.mail.example.net'")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -667,7 +697,14 @@ func main() {
 
 	ratelimit := rate.Limit(*ratelimitFlag)
 
-	s, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, logger)
+	mxSuffixes := []string{}
+	if *mxSuffixesFlag != "" {
+		for _, mxSuffix := range strings.Split(*mxSuffixesFlag, ",") {
+			mxSuffixes = append(mxSuffixes, dns.Fqdn(mxSuffix))
+		}
+	}
+
+	s, err := run(*axfrServerFlag, *resolverFlag, *zoneNameFlag, *zoneFileFlag, *workersFlag, *zoneLimitFlag, *verboseFlag, dialTimeout, readTimeout, writeTimeout, ratelimit, *burstlimitFlag, mxSuffixes, logger)
 	if err != nil {
 		logger.Error("run failed", "error", err)
 		os.Exit(1)

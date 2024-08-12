@@ -503,8 +503,10 @@ func TestRun(t *testing.T) {
 		t.Fatal("unable to parse duration")
 	}
 
+	mxSuffixes := []string{"www.ok.test."}
+
 	// Single worker to make sure we use cached responses
-	s1, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, 10, 1, logger)
+	s1, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, 10, 1, mxSuffixes, logger)
 	if err != nil {
 		t.Fatalf("run with single worker failed: %s", err)
 	}
@@ -517,7 +519,7 @@ func TestRun(t *testing.T) {
 	fmt.Println(string(j1))
 
 	// Multiple worker to test concurrency
-	s2, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, 10, 1, logger)
+	s2, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 10, -1, true, timeout, timeout, timeout, 10, 1, mxSuffixes, logger)
 	if err != nil {
 		t.Fatalf("run with multiple workers failed: %s", err)
 	}
