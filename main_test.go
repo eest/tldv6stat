@@ -83,7 +83,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			wg.Wait()
 		case dns.TypeA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.invalid-a-in-aaaa.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.", "www.additional-aaaa.test.", "www.additional-aaaa-2.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.invalid-a-in-aaaa.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.", "www.additional-aaaa.test.", "www.additional-aaaa-2.test.", "www.multi-mx.test.", "www.multi-mx-onlyv4.test.", "www.multi-mx-multimatch.test.":
 				// Also has A
 				m := new(dns.Msg)
 				m.SetReply(r)
@@ -157,7 +157,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 			}
 		case dns.TypeAAAA:
 			switch r.Question[0].Name {
-			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.", "www.invalid-aaaa-in-a.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.", "www.additional-aaaa.test.", "www.additional-aaaa-2.test.":
+			case "www.ok.test.", "www.ok-2.test.", "www.onlyv6.test.", "www.onlyv6-2.test.", "www.onlyv6-a-timeout.test.", "www.invalid-aaaa-in-a.test.", "www.invalid-mx-cname.test.", "www.invalid-ns-cname.test.", "www.additional-aaaa.test.", "www.additional-aaaa-2.test.", "www.multi-mx.test.", "mx1.multi-mx.test.", "mx2.multi-mx.test.", "www.multi-mx-onlyv4.test.", "www.multi-mx-multimatch.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -173,7 +173,7 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
 				return
-			case "www.onlyv4.test.", "www.onlyv4-2.test.":
+			case "www.onlyv4.test.", "www.onlyv4-2.test.", "mx1.multi-mx-onlyv4.test.", "mx2.multi-mx-onlyv4.test.":
 				// Respond with empty NOERROR
 				m := new(dns.Msg)
 				m.SetReply(r)
@@ -348,13 +348,64 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 				if err != nil {
 					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
 				}
+			case "multi-mx.test.":
+				// Has multiple MX records
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				for _, mxName := range []string{"mx1.multi-mx.test.", "mx2.multi-mx.test."} {
+					mx := new(dns.MX)
+					mx.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+					mx.Preference = 10
+					mx.Mx = mxName
+					m.Answer = append(m.Answer, mx)
+				}
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+			case "multi-mx-onlyv4.test.":
+				// Has multiple MX records, but all of them IPv4-only
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				for _, mxName := range []string{"mx1.multi-mx-onlyv4.test.", "mx2.multi-mx-onlyv4.test."} {
+					mx := new(dns.MX)
+					mx.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+					mx.Preference = 10
+					mx.Mx = mxName
+					m.Answer = append(m.Answer, mx)
+				}
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
+			case "multi-mx-multimatch.test.":
+				// Has multiple MX records, matching multiple suffixes
+				m := new(dns.Msg)
+				m.SetReply(r)
+
+				for _, mxName := range []string{"mx1.multi-mx.test.", "mx1.multi-mx2.test."} {
+					mx := new(dns.MX)
+					mx.Hdr = dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeMX, Class: dns.ClassINET, Ttl: 3600}
+					mx.Preference = 10
+					mx.Mx = mxName
+					m.Answer = append(m.Answer, mx)
+				}
+
+				err := w.WriteMsg(m)
+				if err != nil {
+					t.Errorf("%s (%s): WriteMsg failed: %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
+				}
 			default:
 				sendRefused(t, w, r)
 				return
 			}
 		case dns.TypeNS:
 			switch r.Question[0].Name {
-			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-mx-cname.test.", "cname-www.test.":
+			case "ok.test.", "ok-2.test.", "onlyv6.test.", "onlyv6-2.test.", "onlyv6-a-timeout.test.", "invalid-a-in-aaaa.test.", "invalid-aaaa-in-a.test.", "invalid-mx-cname.test.", "cname-www.test.", "multi-mx.test.", "multi-mx-onlyv4.test.", "multi-mx-multimatch.test.":
 				m := new(dns.Msg)
 				m.SetReply(r)
 
@@ -503,7 +554,7 @@ func TestRun(t *testing.T) {
 		t.Fatal("unable to parse duration")
 	}
 
-	mxSuffixes := []string{"www.ok.test."}
+	mxSuffixes := []string{".multi-mx.test.", ".multi-mx2.test.", ".multi-mx-onlyv4.test."}
 
 	// Single worker to make sure we use cached responses
 	s1, err := run(tcpListener.Addr().String(), udpListener.LocalAddr().String(), "test.", "", 1, -1, true, timeout, timeout, timeout, 10, 1, mxSuffixes, logger)

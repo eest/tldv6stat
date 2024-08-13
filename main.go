@@ -343,6 +343,10 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 		return false, nil
 	}
 
+	mxSuffixTracker := map[string]struct{}{}
+
+	var mxFound bool
+
 	// ... for other types we need to do further lookups for AAAA
 	for _, rr := range msg.Answer {
 		switch queryType {
@@ -362,23 +366,39 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 				if len(zd.mxSuffixes) > 0 {
 					match, suffix := matchSuffix(t.Mx, zd.mxSuffixes)
 					if match {
-						zd.mxSuffixCounterMutex.Lock()
-						zd.mxSuffixCounter[suffix]++
-						zd.mxSuffixCounterMutex.Unlock()
+						// We only want to count one
+						// suffix match per domain, even
+						// if there are multiple
+						// records that match.
+						if _, exists := mxSuffixTracker[suffix]; !exists {
+							mxSuffixTracker[suffix] = struct{}{}
+							zd.mxSuffixCounterMutex.Lock()
+							zd.mxSuffixCounter[suffix]++
+							zd.mxSuffixCounterMutex.Unlock()
+						}
 
 					}
 				}
 
-				found, err := cachedAaaaQuery(zd, t.Mx, queryType, msg, logger)
-				if err != nil {
-					return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for MX name %s: %w", t.Mx, err)
+				// We only need to do further AAAA lookups if
+				// we have not yet found one, otherwise we
+				// are just iterating over the remaining answer
+				// section for mxSuffix counters.
+				if !mxFound {
+					mxFound, err = cachedAaaaQuery(zd, t.Mx, queryType, msg, logger)
+					if err != nil {
+						return false, fmt.Errorf("isV6 cachedAaaaQuery: failed for MX name %s: %w", t.Mx, err)
+					}
 				}
 
-				if found {
-					return found, nil
+				// If we found a match and are not looking for suffix matches in the RRSet we are done
+				if mxFound && len(zd.mxSuffixes) == 0 {
+					return mxFound, nil
 				}
 
-				// No AAAA found, keep trying
+				// No AAAA found and we keep trying, or we
+				// found a match but we are looking for
+				// additional hits against mxSuffixes
 				continue
 			}
 		case dns.TypeNS:
@@ -396,6 +416,16 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 				continue
 			}
 		}
+	}
+
+	// If we got here and mxFound is true we actually found a match
+	if mxFound && len(zd.mxSuffixes) > 0 {
+		return mxFound, nil
+	}
+
+	// Guardrail, this should never happen
+	if mxFound && len(zd.mxSuffixes) == 0 {
+		panic("mxFound is true after loop but we are not looking for MX suffixes, why didnt we return earlier")
 	}
 
 	return false, nil
@@ -432,7 +462,7 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 	}
 
 	if in.Rcode != dns.RcodeSuccess {
-		logger.Info("unsuccessful query rcode", "name", name, "rcode", dns.RcodeToString[in.Rcode])
+		logger.Info("unsuccessful query rcode", "name", name, "rcode", dns.RcodeToString[in.Rcode], "actual_query_type", dns.TypeToString[rtype])
 	}
 
 	zd.rcodeCounterMutex.Lock()
@@ -672,7 +702,7 @@ func main() {
 	var writeTimeoutFlag = flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
 	var ratelimitFlag = flag.Float64("ratelimit", 10, "DNS requests allowed per second, 0 means no limit")
 	var burstlimitFlag = flag.Int("burstlimit", 1, "DNS request burst limit, must be at least 1")
-	var mxSuffixesFlag = flag.String("mx-suffixes", "", "Comma-separated list of MX suffixes to count matches for, e.g. '.mx.example.com,.mail.example.net'")
+	var mxSuffixesFlag = flag.String("mx-suffixes", "", "Comma-separated list of MX suffixes to count zones for, e.g. '.mx.example.com,.mail.example.net'")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
