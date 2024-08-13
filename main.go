@@ -391,8 +391,11 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 					}
 				}
 
-				// If we found a match and are not looking for suffix matches in the RRSet we are done
-				if mxFound && len(zd.mxSuffixes) == 0 {
+				// If we found a match and are not looking for suffix matches in the RRSet we are done.
+				// Also, if we have found a match, are looking for
+				// suffixes, and have found all possible
+				// suffixes we are also done.
+				if (mxFound && len(zd.mxSuffixes) == 0) || (mxFound && len(zd.mxSuffixes) == len(mxSuffixTracker)) {
 					return mxFound, nil
 				}
 
