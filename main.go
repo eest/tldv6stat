@@ -376,7 +376,6 @@ func isV6(queryType uint16, zd *zoneData, name string, logger *slog.Logger) (boo
 							zd.mxSuffixCounter[suffix]++
 							zd.mxSuffixCounterMutex.Unlock()
 						}
-
 					}
 				}
 
@@ -693,19 +692,19 @@ func statsToJson(s stats) ([]byte, error) {
 }
 
 func main() {
-	var zoneNameFlag = flag.String("zone", "se", "zone to investigate")
-	var axfrServerFlag = flag.String("axfr-server", "zonedata.iis.se:53", "server to transfer zone from")
-	var resolverFlag = flag.String("resolver", "8.8.8.8:53", "resolver to query")
-	var zoneFileFlag = flag.String("file", "", "zone file to parse")
-	var workersFlag = flag.Int("workers", 10, "number of workers to start")
-	var zoneLimitFlag = flag.Int("zone-limit", -1, "number of delegated zones to check, -1 means no limit")
-	var verboseFlag = flag.Bool("verbose", false, "enable verbose logging")
-	var dialTimeoutFlag = flag.String("dial-timeout", "10s", "DNS client dial timeout, 0 means using the miekg/dns default")
-	var readTimeoutFlag = flag.String("read-timeout", "10s", "DNS client read timeout, 0 means using the miekg/dns default")
-	var writeTimeoutFlag = flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
-	var ratelimitFlag = flag.Float64("ratelimit", 10, "DNS requests allowed per second, 0 means no limit")
-	var burstlimitFlag = flag.Int("burstlimit", 1, "DNS request burst limit, must be at least 1")
-	var mxSuffixesFlag = flag.String("mx-suffixes", "", "Comma-separated list of MX suffixes to count zones for, e.g. '.mx.example.com,.mail.example.net'")
+	zoneNameFlag := flag.String("zone", "se", "zone to investigate")
+	axfrServerFlag := flag.String("axfr-server", "zonedata.iis.se:53", "server to transfer zone from")
+	resolverFlag := flag.String("resolver", "8.8.8.8:53", "resolver to query")
+	zoneFileFlag := flag.String("file", "", "zone file to parse")
+	workersFlag := flag.Int("workers", 10, "number of workers to start")
+	zoneLimitFlag := flag.Int("zone-limit", -1, "number of delegated zones to check, -1 means no limit")
+	verboseFlag := flag.Bool("verbose", false, "enable verbose logging")
+	dialTimeoutFlag := flag.String("dial-timeout", "10s", "DNS client dial timeout, 0 means using the miekg/dns default")
+	readTimeoutFlag := flag.String("read-timeout", "10s", "DNS client read timeout, 0 means using the miekg/dns default")
+	writeTimeoutFlag := flag.String("write-timeout", "0s", "DNS client write timeout, 0 means using the miekg/dns default")
+	ratelimitFlag := flag.Float64("ratelimit", 10, "DNS requests allowed per second, 0 means no limit")
+	burstlimitFlag := flag.Int("burstlimit", 1, "DNS request burst limit, must be at least 1")
+	mxSuffixesFlag := flag.String("mx-suffixes", "", "Comma-separated list of MX suffixes to count zones for, e.g. '.mx.example.com,.mail.example.net'")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
