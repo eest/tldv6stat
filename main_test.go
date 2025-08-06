@@ -563,9 +563,9 @@ func TestRun(t *testing.T) {
 		t.Fatalf("run with single worker failed: %s", err)
 	}
 
-	j1, err := statsToJson(s1)
+	j1, err := statsToJSON(s1)
 	if err != nil {
-		t.Fatalf("statsToJson with single worker failed: %s", err)
+		t.Fatalf("statsToJSON with single worker failed: %s", err)
 	}
 
 	fmt.Println(string(j1))
@@ -576,9 +576,9 @@ func TestRun(t *testing.T) {
 		t.Fatalf("run with multiple workers failed: %s", err)
 	}
 
-	j2, err := statsToJson(s2)
+	j2, err := statsToJSON(s2)
 	if err != nil {
-		t.Fatalf("statsToJson with multiple workers failed: %s", err)
+		t.Fatalf("statsToJSON with multiple workers failed: %s", err)
 	}
 
 	fmt.Println(string(j2))

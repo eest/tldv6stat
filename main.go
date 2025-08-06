@@ -284,12 +284,12 @@ func cachedAaaaQuery(zd *zoneData, name string, origQueryType uint16, origMsg *d
 		}
 		zd.aaaaCache.Store(name, true)
 		return true, nil
-	} else {
-		if zd.verbose {
-			logger.Info("cached negative AAAA", "name", name)
-		}
-		zd.aaaaCache.Store(name, false)
 	}
+
+	if zd.verbose {
+		logger.Info("cached negative AAAA", "name", name)
+	}
+	zd.aaaaCache.Store(name, false)
 
 	return false, nil
 }
@@ -670,7 +670,7 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 		zoneCh <- zone
 		zd.zoneCounter++
 		if zoneLimit > 0 {
-			zoneLimit -= 1
+			zoneLimit--
 		}
 	}
 
@@ -682,10 +682,10 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 	return s, nil
 }
 
-func statsToJson(s stats) ([]byte, error) {
+func statsToJSON(s stats) ([]byte, error) {
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("statsToJson: encoding failed: %w", err)
+		return nil, fmt.Errorf("statsToJSON: encoding failed: %w", err)
 	}
 
 	return b, nil
@@ -742,7 +742,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	j, err := statsToJson(s)
+	j, err := statsToJSON(s)
 	if err != nil {
 		logger.Error("json encoding failed", "error", err)
 		os.Exit(1)
