@@ -27,7 +27,6 @@ func sendRefused(t *testing.T, w dns.ResponseWriter, r *dns.Msg) {
 	err := w.WriteMsg(m)
 	if err != nil {
 		t.Errorf("sendRefused: WriteMsg failed for %s (%s): %s", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype], err)
-
 	}
 }
 
@@ -35,7 +34,12 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 	testZone := "test."
 	testZoneFilename := testZone + "zone"
 	return func(w dns.ResponseWriter, r *dns.Msg) {
-		defer w.Close()
+		defer func() {
+			err := w.Close()
+			if err != nil {
+				t.Errorf("unable to close dns.ResponseWriter: %s", err)
+			}
+		}()
 
 		if r.Question[0].Qclass != dns.ClassINET {
 			sendNotImp(t, w, r)
@@ -485,7 +489,6 @@ func handleRequest(t *testing.T) dns.HandlerFunc {
 		// Catch anything else
 		sendRefused(t, w, r)
 	}
-
 }
 
 func TestRun(t *testing.T) {
@@ -520,14 +523,12 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Errorf("UDP ActivateAndServe failed: %s", err)
 		}
-		udpListener.Close()
 	}()
 	go func() {
 		err := tcpServer.ActivateAndServe()
 		if err != nil {
 			t.Errorf("TCP ActivateAndServe failed: %s", err)
 		}
-		tcpListener.Close()
 	}()
 
 	defer func() {
