@@ -1,6 +1,6 @@
 module github.com/eest/tldv6stat
 
-go 1.24.5
+go 1.24.6
 
 require (
 	github.com/miekg/dns v1.1.68
