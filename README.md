@@ -68,7 +68,7 @@ Usage of tldv6stat:
 When working on this code the following tools are expected to be used before
 committing:
 * `gofumpt -l -w .` (see [gofumpt](https://github.com/mvdan/gofumpt))
-* `go vet`
+* `go vet ./...`
 * `staticcheck ./...` (see [staticcheck](https://staticcheck.io))
 * `gosec ./...` (see [gosec](https://github.com/securego/gosec))
 * `golangci-lint run` (see [golangci-lint](https://golangci-lint.run))
