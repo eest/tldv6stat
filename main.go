@@ -15,14 +15,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/dnsutil"
 	"golang.org/x/time/rate"
 )
 
 type zoneData struct {
 	startTime            time.Time
-	udpClient            *dns.Client
-	tcpClient            *dns.Client
+	client               *dns.Client
 	zones                map[string]struct{}
 	wwwCounter           atomic.Uint64
 	wwwOnlyV6Counter     atomic.Uint64
@@ -35,7 +35,7 @@ type zoneData struct {
 	limiter              *rate.Limiter
 	resolver             string
 	rcodeCounterMutex    sync.Mutex
-	rcodeCounter         map[int]uint64
+	rcodeCounter         map[uint16]uint64
 	timeoutCounter       atomic.Uint64
 	zoneSerial           uint32
 	verbose              bool
@@ -439,16 +439,15 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 		return nil, fmt.Errorf("retryingLookup: limiter.Wait failed: %w", err)
 	}
 
-	m := new(dns.Msg)
-	m.SetQuestion(name, rtype)
-	m.SetEdns0(4096, false)
+	m := dns.NewMsg(name, rtype)
+	m.UDPSize, m.Security = 4096, false
 
 	if zd.verbose {
 		logger.Info("sending UDP query", "name", name)
 	}
 
 	zd.udpCounter.Add(1)
-	in, _, err := zd.udpClient.Exchange(m, zd.resolver)
+	in, _, err := zd.client.Exchange(context.TODO(), m, "udp", zd.resolver)
 	if err != nil {
 		return nil, fmt.Errorf("error looking up %s for '%s' over UDP: %w", dns.TypeToString[rtype], name, err)
 	}
@@ -457,7 +456,7 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 	if in.Truncated {
 		logger.Info("UDP query was truncated, retrying over TCP", "name", name)
 		zd.tcpCounter.Add(1)
-		in, _, err = zd.tcpClient.Exchange(m, zd.resolver)
+		in, _, err = zd.client.Exchange(context.TODO(), m, "tcp", zd.resolver)
 		if err != nil {
 			return nil, fmt.Errorf("error looking up %s for '%s' over TCP: %w", dns.TypeToString[rtype], name, err)
 		}
@@ -475,24 +474,27 @@ func dnsQuery(zd *zoneData, name string, rtype uint16, logger *slog.Logger) (*dn
 }
 
 func parseTransfer(axfrServer string, transferZone string, zd *zoneData) error {
-	t := new(dns.Transfer)
-	m := new(dns.Msg)
-	m.SetAxfr(transferZone)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Do zone transfer
-	c, err := t.In(m, axfrServer)
+	c := dns.NewClient()
+	m := dns.NewMsg(transferZone, dns.TypeAXFR)
+	m.RecursionDesired = false
+	env, err := c.TransferIn(ctx, m, "tcp", axfrServer)
 	if err != nil {
-		return fmt.Errorf("doTransfer: unable to do transfer: %w", err)
+		return fmt.Errorf("parseTransfer: unable to setup zone transfer in: %w", err)
 	}
 
 	// Summarize zone names
-	for r := range c {
-		if r.Error != nil {
-			return fmt.Errorf("parseTransfer: zone transfer failed: %w", r.Error)
+	for e := range env {
+		if e.Error != nil {
+			return fmt.Errorf("parseTransfer: zone transfer failed: %w", e.Error)
 		}
 
-		for _, rr := range r.RR {
+		for _, rr := range e.Answer {
 			// Note current zone serial
-			if rr.Header().Name == transferZone && rr.Header().Rrtype == dns.TypeSOA {
+			if rr.Header().Name == transferZone && dns.RRToType(rr) == dns.TypeSOA {
 				if soa, ok := rr.(*dns.SOA); ok {
 					zd.zoneSerial = soa.Serial
 				} else {
@@ -501,7 +503,7 @@ func parseTransfer(axfrServer string, transferZone string, zd *zoneData) error {
 			}
 
 			// Only care about zone delegations
-			if rr.Header().Rrtype != dns.TypeNS {
+			if dns.RRToType(rr) != dns.TypeNS {
 				continue
 			}
 
@@ -530,7 +532,7 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 	// Summarize zone names
 	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
 		// Note zone serial
-		if rr.Header().Name == zoneName && rr.Header().Rrtype == dns.TypeSOA {
+		if rr.Header().Name == zoneName && dns.RRToType(rr) == dns.TypeSOA {
 			if soa, ok := rr.(*dns.SOA); ok {
 				zd.zoneSerial = soa.Serial
 			} else {
@@ -539,7 +541,7 @@ func parseZonefile(zoneName string, zoneFile string, zd *zoneData) error {
 		}
 
 		// Only care about zone delegations
-		if rr.Header().Rrtype != dns.TypeNS {
+		if dns.RRToType(rr) != dns.TypeNS {
 			continue
 		}
 
@@ -581,11 +583,11 @@ func validAnswer(msg *dns.Msg, queryType uint16, origQueryType uint16, logger *s
 				return true
 			}
 		default:
-			typeString, ok := dns.TypeToString[record.Header().Rrtype]
+			typeString, ok := dns.TypeToString[dns.RRToType(record)]
 			if ok {
 				logger.Error("validAnswer: record in answer section is unexpected type", "sub_query_type", dns.TypeToString[queryType], "actual_rtype", typeString)
 			} else {
-				logger.Error("validAnswer: record in  answer section is unknown type", "sub_query_type", dns.TypeToString[queryType], "actual_rtype_int", record.Header().Rrtype)
+				logger.Error("validAnswer: record in  answer section is unknown type", "sub_query_type", dns.TypeToString[queryType], "actual_rtype_int", dns.RRToType(record))
 			}
 		}
 	}
@@ -598,7 +600,7 @@ func validAnswer(msg *dns.Msg, queryType uint16, origQueryType uint16, logger *s
 func run(axfrServer string, resolver string, zoneName string, zoneFile string, workers int, zoneLimit int, verbose bool, dialTimeout time.Duration, readTimeout time.Duration, writeTimeout time.Duration, ratelimit rate.Limit, burstlimit int, mxSuffixes []string, logger *slog.Logger) (stats, error) {
 	zoneCh := make(chan string)
 
-	zoneName = dns.Fqdn(zoneName)
+	zoneName = dnsutil.Fqdn(zoneName)
 
 	if burstlimit < 1 {
 		return stats{}, fmt.Errorf("run: invalid burst limit: %d", burstlimit)
@@ -615,28 +617,28 @@ func run(axfrServer string, resolver string, zoneName string, zoneFile string, w
 		zones:           map[string]struct{}{},
 		limiter:         rate.NewLimiter(ratelimit, burstlimit),
 		resolver:        resolver,
-		udpClient:       &dns.Client{},
-		tcpClient:       &dns.Client{Net: "tcp"},
-		rcodeCounter:    map[int]uint64{},
+		client:          &dns.Client{},
+		rcodeCounter:    map[uint16]uint64{},
 		verbose:         verbose,
 		mxSuffixes:      mxSuffixes,
 		mxSuffixCounter: map[string]uint64{},
 	}
 
+	transport := dns.NewTransport()
+
 	if dialTimeout != 0 {
-		zd.udpClient.DialTimeout = dialTimeout
-		zd.tcpClient.DialTimeout = dialTimeout
+		transport.Dialer.Timeout = dialTimeout
 	}
 
 	if readTimeout != 0 {
-		zd.udpClient.ReadTimeout = readTimeout
-		zd.tcpClient.ReadTimeout = readTimeout
+		transport.ReadTimeout = readTimeout
 	}
 
 	if writeTimeout != 0 {
-		zd.udpClient.WriteTimeout = writeTimeout
-		zd.tcpClient.WriteTimeout = writeTimeout
+		transport.WriteTimeout = writeTimeout
 	}
+
+	zd.client.Transport = transport
 
 	var wg sync.WaitGroup
 
@@ -732,7 +734,7 @@ func main() {
 	mxSuffixes := []string{}
 	if *mxSuffixesFlag != "" {
 		for _, mxSuffix := range strings.Split(*mxSuffixesFlag, ",") {
-			mxSuffixes = append(mxSuffixes, dns.Fqdn(mxSuffix))
+			mxSuffixes = append(mxSuffixes, dnsutil.Fqdn(mxSuffix))
 		}
 	}
 
